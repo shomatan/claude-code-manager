@@ -46,6 +46,21 @@ export class ClaudeProcessManager extends EventEmitter {
     return session;
   }
 
+  // Check if unbuffer command exists
+  private checkUnbufferExists(): boolean {
+    const commonPaths = [
+      "/opt/homebrew/bin/unbuffer",
+      "/usr/local/bin/unbuffer",
+      "/usr/bin/unbuffer",
+    ];
+    for (const p of commonPaths) {
+      if (fs.existsSync(p)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Find claude executable path
   private findClaudePath(): string {
     // Use CLAUDE_PATH env var if set
@@ -97,18 +112,24 @@ export class ClaudeProcessManager extends EventEmitter {
     const claudePath = this.findClaudePath();
     console.log(`[Claude] Using claude path: ${claudePath}`);
 
-    // Build arguments array
-    const args = [
+    // Build arguments array for claude
+    const claudeArgs = [
       "-p", message,
       "--output-format", "stream-json",
       "--verbose",
       "--dangerously-skip-permissions", // Skip trust prompts for non-interactive use
     ];
     
-    console.log(`[Claude] Spawning: ${claudePath} ${args.join(" ")}`);
+    // Use unbuffer to emulate TTY (required for Claude CLI to output properly)
+    // unbuffer is part of the 'expect' package
+    const useUnbuffer = this.checkUnbufferExists();
+    const command = useUnbuffer ? "unbuffer" : claudePath;
+    const args = useUnbuffer ? [claudePath, ...claudeArgs] : claudeArgs;
+    
+    console.log(`[Claude] Spawning: ${command} ${args.join(" ")}`);
 
     try {
-      const claudeProcess = spawn(claudePath, args, {
+      const claudeProcess = spawn(command, args, {
         cwd: info.session.worktreePath,
         env: {
           ...process.env,
