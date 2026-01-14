@@ -162,9 +162,11 @@ export function useSocket(): UseSocketReturn {
 
     // Message events
     socket.on("message:received", (message) => {
+      console.log("[Socket] Message received:", message.id, message.role, message.content?.substring(0, 30));
       setMessages((prev) => {
         const next = new Map(prev);
         const sessionMessages = next.get(message.sessionId) || [];
+        console.log("[Socket] Current messages for session:", sessionMessages.length, "Adding new message");
         next.set(message.sessionId, [...sessionMessages, message]);
         return next;
       });
@@ -254,6 +256,24 @@ export function useSocket(): UseSocketReturn {
   }, []);
 
   const sendMessage = useCallback((sessionId: string, message: string) => {
+    // Add user message to local state immediately
+    const userMessage: Message = {
+      id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      sessionId,
+      role: "user",
+      content: message,
+      timestamp: new Date(),
+      type: "text",
+    };
+    
+    setMessages((prev) => {
+      const next = new Map(prev);
+      const sessionMessages = next.get(sessionId) || [];
+      next.set(sessionId, [...sessionMessages, userMessage]);
+      return next;
+    });
+    
+    // Send to server
     socketRef.current?.emit("session:send", { sessionId, message });
   }, []);
 
