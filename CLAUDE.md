@@ -25,6 +25,215 @@
 3. **マルチペインビュー**: 複数セッションを同時に表示する機能
 4. **セッション履歴の永続化**: localStorage または ファイルベースでの保存
 
+---
+
+## 🚨 最優先タスク: 会話継続の実装
+
+### 問題
+
+現在の`server/lib/claude.ts`は、各メッセージごとに新しい`query()`を作成しています。これにより：
+- 毎回新しいセッションが開始される
+- 会話コンテキストが維持されない
+- 毎回プロセス起動のオーバーヘッドがある
+
+### 解決策: TypeScript SDK V2 インターフェース
+
+Claude Agent SDK TypeScriptには**V2インターフェース（プレビュー）**があり、`send()`/`stream()`パターンで会話継続が簡単に実装できます。
+
+**参考ドキュメント**: https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview
+
+### V2 API の主要コンセプト
+
+| 関数 | 説明 |
+|------|------|
+| `unstable_v2_createSession()` | 新しいセッションを作成 |
+| `unstable_v2_resumeSession(sessionId)` | 既存セッションを再開 |
+| `session.send(message)` | メッセージを送信 |
+| `session.stream()` | レスポンスをストリーミング受信 |
+| `session.close()` | セッションを閉じる |
+
+### 実装プラン
+
+#### Step 1: claude.ts を V2 API に移行
+
+```typescript
+// server/lib/claude.ts
+
+import {
+  unstable_v2_createSession,
+  unstable_v2_resumeSession,
+  type SDKMessage,
+  type Session as SDKSession,
+} from "@anthropic-ai/claude-agent-sdk";
+import { EventEmitter } from "events";
+import { nanoid } from "nanoid";
+import type { Session, Message } from "../../shared/types.js";
+
+interface SessionInfo {
+  session: Session;
+  sdkSession: SDKSession | null;  // V2 SDK セッション
+  sdkSessionId: string | null;    // 再開用のセッションID
+}
+
+export class ClaudeProcessManager extends EventEmitter {
+  private sessions: Map<string, SessionInfo> = new Map();
+
+  // セッション開始
+  async startSession(worktreeId: string, worktreePath: string): Promise<Session> {
+    const sessionId = nanoid();
+    
+    const session: Session = {
+      id: sessionId,
+      worktreeId,
+      worktreePath,
+      status: "idle",
+      createdAt: new Date(),
+    };
+
+    // V2 SDK セッションを作成
+    const sdkSession = unstable_v2_createSession({
+      cwd: worktreePath,
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      tools: { type: "preset", preset: "claude_code" },
+      systemPrompt: { type: "preset", preset: "claude_code" },
+    });
+
+    this.sessions.set(sessionId, {
+      session,
+      sdkSession,
+      sdkSessionId: null,
+    });
+
+    this.emit("session:created", session);
+    return session;
+  }
+
+  // メッセージ送信（会話継続）
+  async sendMessage(sessionId: string, message: string): Promise<void> {
+    const info = this.sessions.get(sessionId);
+    if (!info || !info.sdkSession) {
+      throw new Error("Session not found");
+    }
+
+    // ユーザーメッセージを送信
+    const userMessage: Message = {
+      id: nanoid(),
+      sessionId,
+      role: "user",
+      content: message,
+      timestamp: new Date(),
+      type: "text",
+    };
+    this.emit("message:received", userMessage);
+
+    info.session.status = "active";
+    this.emit("session:updated", info.session);
+
+    try {
+      // V2 API: send() でメッセージ送信
+      await info.sdkSession.send(message);
+
+      // V2 API: stream() でレスポンス受信
+      let accumulatedContent = "";
+      for await (const msg of info.sdkSession.stream()) {
+        // セッションIDを保存（再開用）
+        if (!info.sdkSessionId && msg.session_id) {
+          info.sdkSessionId = msg.session_id;
+        }
+
+        if (msg.type === "assistant") {
+          const text = msg.message.content
+            .filter((block: any) => block.type === "text")
+            .map((block: any) => block.text)
+            .join("");
+          
+          if (text) {
+            accumulatedContent += text;
+            this.emit("message:stream", {
+              sessionId,
+              chunk: text,
+              type: "text",
+            });
+          }
+        }
+      }
+
+      // 完了メッセージ
+      if (accumulatedContent) {
+        const assistantMessage: Message = {
+          id: nanoid(),
+          sessionId,
+          role: "assistant",
+          content: accumulatedContent,
+          timestamp: new Date(),
+          type: "text",
+        };
+        this.emit("message:received", assistantMessage);
+      }
+
+      info.session.status = "idle";
+      this.emit("session:updated", info.session);
+      this.emit("message:complete", { sessionId, messageId: nanoid() });
+
+    } catch (error) {
+      console.error(`[Claude] Error: ${error}`);
+      info.session.status = "error";
+      this.emit("session:updated", info.session);
+    }
+  }
+
+  // セッション停止
+  stopSession(sessionId: string): void {
+    const info = this.sessions.get(sessionId);
+    if (!info) return;
+
+    // V2 API: セッションを閉じる
+    if (info.sdkSession) {
+      info.sdkSession.close();
+    }
+
+    info.session.status = "stopped";
+    this.emit("session:stopped", sessionId);
+    this.sessions.delete(sessionId);
+  }
+}
+```
+
+#### Step 2: セッション再開機能の追加
+
+ブラウザリロード後もセッションを再開できるようにする：
+
+```typescript
+// セッション再開
+async resumeSession(sessionId: string, sdkSessionId: string, worktreePath: string): Promise<void> {
+  const sdkSession = unstable_v2_resumeSession(sdkSessionId, {
+    cwd: worktreePath,
+    permissionMode: "bypassPermissions",
+    allowDangerouslySkipPermissions: true,
+  });
+
+  // 既存のセッション情報を更新
+  const info = this.sessions.get(sessionId);
+  if (info) {
+    info.sdkSession = sdkSession;
+    info.sdkSessionId = sdkSessionId;
+  }
+}
+```
+
+### 実装手順チェックリスト
+
+1. [ ] `server/lib/claude.ts` を V2 API に書き換え
+2. [ ] `unstable_v2_createSession()` でセッション作成
+3. [ ] `session.send()` / `session.stream()` でメッセージ送受信
+4. [ ] `session_id` を保存して再開可能に
+5. [ ] `session.close()` でクリーンアップ
+6. [ ] エラーハンドリングの追加
+7. [ ] フロントエンドでのメッセージ表示修正
+
+---
+
 ## 技術スタック
 
 ```
@@ -68,55 +277,12 @@ claude-code-manager/
 ├── server/                    # バックエンド
 │   ├── index.ts               # Expressサーバー
 │   └── lib/
-│       ├── claude.ts          # Claude Agent SDK統合
+│       ├── claude.ts          # Claude Agent SDK統合 ← 要修正
 │       └── git.ts             # Git worktree操作
 ├── shared/                    # 共有型定義
 │   └── types.ts
 └── package.json
 ```
-
-## 重要なファイル
-
-### server/lib/claude.ts
-
-Claude Agent SDKを使用してClaude Codeプロセスを管理します。
-
-**現在の実装の問題点:**
-```typescript
-// 各メッセージごとに新しいquery()を作成している
-const queryInstance = query({
-  prompt: message,
-  options,
-});
-```
-
-**改善案: ストリーミング入力モードを使用**
-```typescript
-// AsyncIterableを使用して1つのセッションで複数メッセージを送信
-async function* messageGenerator(): AsyncIterable<SDKUserMessage> {
-  while (true) {
-    const message = await waitForNextMessage();
-    yield { type: "user", content: message };
-  }
-}
-
-const queryInstance = query({
-  prompt: messageGenerator(),
-  options,
-});
-```
-
-### client/src/hooks/useSocket.ts
-
-Socket.IO接続とメッセージ状態を管理するReactフック。
-
-**既知の問題:**
-- `messages`ステートが更新されてもChatPaneが再レンダリングされない場合がある
-- デバッグログでは状態更新が確認できるが、UIに反映されない
-
-### shared/types.ts
-
-フロントエンドとバックエンドで共有する型定義。
 
 ## 開発コマンド
 
@@ -139,43 +305,6 @@ pnpm build
 # 本番実行
 pnpm start
 ```
-
-## 優先度の高いタスク
-
-### 1. 会話継続の実装（高優先度）
-
-**目標**: 1つのセッション内で複数のメッセージを送信し、会話コンテキストを維持する
-
-**アプローチ**:
-1. `AsyncIterable<SDKUserMessage>`を使用したストリーミング入力モード
-2. または `resume` オプションでセッションIDを指定して継続
-
-**参考ドキュメント**: https://platform.claude.com/docs/en/agent-sdk/typescript
-
-### 2. メッセージ表示の修正（高優先度）
-
-**問題**: ユーザーメッセージがChatPaneに表示されない
-
-**調査ポイント**:
-- `useSocket.ts`の`messages`ステート管理
-- `ChatPane.tsx`への`messages`プロップの受け渡し
-- Reactの再レンダリングトリガー
-
-### 3. マルチペインビュー（中優先度）
-
-**目標**: 複数のClaude Codeセッションを同時に表示・操作
-
-**実装案**:
-- `react-resizable-panels`を使用（既にインストール済み）
-- 各ペインに独立したChatPaneを配置
-
-### 4. セッション永続化（低優先度）
-
-**目標**: ブラウザをリロードしてもセッション履歴を保持
-
-**実装案**:
-- localStorageにメッセージ履歴を保存
-- または、サーバー側でファイルに保存
 
 ## Socket.IOイベント一覧
 
@@ -224,19 +353,19 @@ pnpm start
 | 変数 | デフォルト | 説明 |
 |------|-----------|------|
 | `PORT` | `3001` | バックエンドサーバーのポート |
-| `CLAUDE_PATH` | 自動検出 | Claude CLIの実行パス |
 | `ANTHROPIC_API_KEY` | - | Anthropic APIキー（SDK使用時） |
 
 ## 既知の問題
 
-1. **TypeScriptエラー**: `this.sessions`が`this.processes`と混在している箇所がある（修正済み）
-2. **unbuffer依存**: 以前はunbufferコマンドが必要だったが、SDK移行により不要に
-3. **権限プロンプト**: `--dangerously-skip-permissions`フラグで回避中
+1. **会話継続**: 現在は各メッセージごとに新しいセッションを作成している（V2 APIで解決予定）
+2. **ユーザーメッセージ表示**: ChatPaneでユーザーメッセージが表示されない
+3. **権限プロンプト**: `bypassPermissions`モードで回避中
 
 ## 参考リンク
 
-- [Claude Agent SDK Documentation](https://platform.claude.com/docs/en/agent-sdk/overview)
-- [Claude Agent SDK TypeScript Reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
+- [Claude Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview)
+- [TypeScript SDK Reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
+- [TypeScript SDK V2 (Preview)](https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview) ← 推奨
 - [GitHub Repository](https://github.com/shomatan/claude-code-manager)
 
 ## 連絡先
