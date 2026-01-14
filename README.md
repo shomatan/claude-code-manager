@@ -15,12 +15,13 @@
 - pnpm
 - Git
 - Claude Code CLI（`claude`コマンドがPATHに通っていること）
+- Anthropic APIキー（環境変数 `ANTHROPIC_API_KEY`）
 
 ## インストール
 
 ```bash
 # リポジトリをクローン
-git clone <repository-url>
+git clone https://github.com/shomatan/claude-code-manager.git
 cd claude-code-manager
 
 # 依存関係をインストール
@@ -43,7 +44,7 @@ pnpm dev:full
 
 これにより、以下が同時に起動します：
 - Vite開発サーバー（フロントエンド）: http://localhost:5173
-- Express + Socket.IOサーバー（バックエンド）: http://localhost:3000
+- Express + Socket.IOサーバー（バックエンド）: http://localhost:3001
 
 ## ビルド
 
@@ -71,6 +72,7 @@ pnpm start
 
 - **フロントエンド**: React 19, TypeScript, Tailwind CSS 4, shadcn/ui
 - **バックエンド**: Express, Socket.IO
+- **Claude統合**: Claude Agent SDK (@anthropic-ai/claude-agent-sdk)
 - **ビルドツール**: Vite, esbuild
 - **デザイン**: Terminal-Inspired Dark Mode
 
@@ -81,12 +83,12 @@ pnpm start
 │                         Browser                              │
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │                    React Frontend                        ││
-│  │  ┌─────────────┐  ┌─────────────────────────────────┐  ││
-│  │  │  Sidebar    │  │         Chat Panel               │  ││
-│  │  │  - Repo     │  │  - Messages                      │  ││
-│  │  │  - Worktrees│  │  - Streaming                     │  ││
-│  │  │  - Sessions │  │  - Input                         │  ││
-│  │  └─────────────┘  └─────────────────────────────────┘  ││
+│  │  ┌─────────────────┐  ┌─────────────────────────────┐  ││
+│  │  │    Sidebar      │  │         Chat Panel           │  ││
+│  │  │  - Repository   │  │  - Messages                  │  ││
+│  │  │  - Worktrees    │  │  - Streaming                 │  ││
+│  │  │  - Sessions     │  │  - Input                     │  ││
+│  │  └─────────────────┘  └─────────────────────────────┘  ││
 │  └─────────────────────────────────────────────────────────┘│
 │                              │                               │
 │                     Socket.IO (WebSocket)                    │
@@ -98,20 +100,24 @@ pnpm start
 │  │                   Express + Socket.IO                    ││
 │  │  ┌─────────────────┐  ┌─────────────────────────────┐  ││
 │  │  │   Git Module    │  │   Claude Process Manager    │  ││
-│  │  │  - list         │  │  - spawn process            │  ││
-│  │  │  - add          │  │  - stream-json parsing      │  ││
-│  │  │  - remove       │  │  - session management       │  ││
+│  │  │  - list         │  │  - Claude Agent SDK         │  ││
+│  │  │  - add          │  │  - Session management       │  ││
+│  │  │  - remove       │  │  - Message streaming        │  ││
 │  │  └─────────────────┘  └─────────────────────────────┘  ││
 │  └─────────────────────────────────────────────────────────┘│
 │                              │                               │
-│                    child_process.spawn                       │
+│                    Claude Agent SDK                          │
 └──────────────────────────────┼───────────────────────────────┘
                                │
                     ┌──────────┴──────────┐
                     │    Claude Code CLI   │
-                    │  (stream-json mode)  │
+                    │  (managed by SDK)    │
                     └─────────────────────┘
 ```
+
+## 開発者向け情報
+
+開発を引き継ぐ場合は、[CLAUDE.md](./CLAUDE.md)を参照してください。
 
 ## ライセンス
 
