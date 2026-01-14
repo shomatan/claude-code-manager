@@ -100,6 +100,21 @@ export class ClaudeProcessManager extends EventEmitter {
 
     console.log(`[Claude] Process spawned with PID: ${claudeProcess.pid}`);
 
+    // Check if stdout/stderr are available
+    if (!claudeProcess.stdout) {
+      console.error(`[Claude] stdout is null!`);
+      return;
+    }
+    if (!claudeProcess.stderr) {
+      console.error(`[Claude] stderr is null!`);
+      return;
+    }
+
+    // Log spawn event
+    claudeProcess.on("spawn", () => {
+      console.log(`[Claude] Process spawn event received`);
+    });
+
     // Handle stdout (stream-json events)
     claudeProcess.stdout.on("data", (data: Buffer) => {
       const chunk = data.toString();
