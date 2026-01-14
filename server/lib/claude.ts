@@ -2,16 +2,19 @@
  * Claude Code Process Manager
  * 
  * Manages Claude Code CLI processes for each session.
- * Uses node-pty for TTY emulation and stream-json output format.
+ * Uses macOS `script` command for TTY emulation and stream-json output format.
  */
 
-import { spawn as ptySpawn, IPty } from "node-pty";
+import { spawn, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
 import { nanoid } from "nanoid";
+import * as os from "os";
+import * as path from "path";
+import * as fs from "fs";
 import type { Session, Message, ClaudeStreamEvent } from "../../shared/types.js";
 
 interface ProcessInfo {
-  process: IPty | null;
+  process: ChildProcess | null;
   session: Session;
   buffer: string;
 }
@@ -70,41 +73,76 @@ export class ClaudeProcessManager extends EventEmitter {
     };
     this.emit("message:received", userMessage);
 
-    // Use CLAUDE_PATH env var or default to 'claude'
-    const claudePath = process.env.CLAUDE_PATH || "claude";
+    // Use CLAUDE_PATH env var or try common locations
+    let claudePath = process.env.CLAUDE_PATH;
+    if (!claudePath) {
+      const commonPaths = [
+        "/opt/homebrew/bin/claude",
+        "/usr/local/bin/claude",
+        "/usr/bin/claude",
+      ];
+      for (const p of commonPaths) {
+        if (fs.existsSync(p)) {
+          claudePath = p;
+          break;
+        }
+      }
+    }
+    if (!claudePath) {
+      claudePath = "claude"; // Fallback to PATH lookup
+    }
     console.log(`[Claude] Using claude path: ${claudePath}`);
 
-    // Build arguments array
-    const args = [
+    // Build the claude command
+    const claudeArgs = [
       "-p", message,
       "--output-format", "stream-json",
       "--verbose",
     ];
-    console.log(`[Claude] Spawning with PTY: ${claudePath} ${args.join(" ")}`);
+    
+    // Create a temporary file for script output
+    const tmpFile = path.join(os.tmpdir(), `claude-${sessionId}.log`);
+    
+    // Use `script` command to create a PTY
+    // macOS: script -q /dev/null command args...
+    // Linux: script -q -c "command args..." /dev/null
+    const isMac = os.platform() === "darwin";
+    
+    let scriptArgs: string[];
+    if (isMac) {
+      // macOS script syntax: script -q output_file command [args...]
+      scriptArgs = ["-q", "/dev/null", claudePath, ...claudeArgs];
+    } else {
+      // Linux script syntax: script -q -c "command" output_file
+      const fullCommand = [claudePath, ...claudeArgs].map(arg => 
+        arg.includes(" ") ? `"${arg}"` : arg
+      ).join(" ");
+      scriptArgs = ["-q", "-c", fullCommand, "/dev/null"];
+    }
+    
+    console.log(`[Claude] Spawning with script: script ${scriptArgs.join(" ")}`);
 
     try {
-      // Spawn Claude Code process with PTY
-      const ptyProcess = ptySpawn(claudePath, args, {
-        name: "xterm-256color",
-        cols: 120,
-        rows: 30,
+      const scriptProcess = spawn("script", scriptArgs, {
         cwd: info.session.worktreePath,
         env: {
           ...process.env,
           CI: "true",
           TERM: "xterm-256color",
-        } as { [key: string]: string },
+        },
+        stdio: ["pipe", "pipe", "pipe"],
       });
 
-      info.process = ptyProcess;
+      info.process = scriptProcess;
       info.buffer = "";
 
-      console.log(`[Claude] PTY process spawned with PID: ${ptyProcess.pid}`);
+      console.log(`[Claude] Process spawned with PID: ${scriptProcess.pid}`);
 
-      // Handle data from PTY
-      ptyProcess.onData((data: string) => {
-        console.log(`[Claude] PTY data: ${data.substring(0, 100)}...`);
-        info.buffer += data;
+      // Handle stdout
+      scriptProcess.stdout?.on("data", (data: Buffer) => {
+        const chunk = data.toString();
+        console.log(`[Claude] stdout: ${chunk.substring(0, 100)}...`);
+        info.buffer += chunk;
 
         // Process complete JSON lines
         const lines = info.buffer.split("\n");
@@ -113,32 +151,54 @@ export class ClaudeProcessManager extends EventEmitter {
         for (const line of lines) {
           const trimmedLine = line.trim();
           // Remove ANSI escape codes
-          const cleanLine = trimmedLine.replace(/\x1b\[[0-9;]*m/g, "");
+          const cleanLine = trimmedLine.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
           if (cleanLine) {
             this.processStreamEvent(sessionId, cleanLine);
           }
         }
       });
 
+      // Handle stderr
+      scriptProcess.stderr?.on("data", (data: Buffer) => {
+        console.log(`[Claude] stderr: ${data.toString()}`);
+      });
+
       // Handle process exit
-      ptyProcess.onExit(({ exitCode }) => {
-        console.log(`[Claude] PTY process exited with code: ${exitCode}`);
+      scriptProcess.on("close", (code) => {
+        console.log(`[Claude] Process exited with code: ${code}`);
         
         // Process any remaining buffer
         if (info.buffer.trim()) {
-          const cleanBuffer = info.buffer.trim().replace(/\x1b\[[0-9;]*m/g, "");
+          const cleanBuffer = info.buffer.trim().replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
           if (cleanBuffer) {
             this.processStreamEvent(sessionId, cleanBuffer);
           }
         }
 
-        info.session.status = exitCode === 0 ? "idle" : "error";
+        info.session.status = code === 0 ? "idle" : "error";
         this.emit("session:updated", info.session);
         this.emit("message:complete", { sessionId, messageId: nanoid() });
       });
 
+      // Handle process error
+      scriptProcess.on("error", (error) => {
+        console.error(`[Claude] Process error: ${error.message}`);
+        const errorMessage: Message = {
+          id: nanoid(),
+          sessionId,
+          role: "system",
+          content: `Failed to start Claude Code: ${error.message}`,
+          timestamp: new Date(),
+          type: "error",
+        };
+        this.emit("message:received", errorMessage);
+        
+        info.session.status = "error";
+        this.emit("session:updated", info.session);
+      });
+
     } catch (error) {
-      console.error(`[Claude] Failed to spawn PTY process: ${error}`);
+      console.error(`[Claude] Failed to spawn process: ${error}`);
       const errorMessage: Message = {
         id: nanoid(),
         sessionId,
@@ -221,13 +281,16 @@ export class ClaudeProcessManager extends EventEmitter {
           break;
       }
     } catch (e) {
-      // Not valid JSON, might be plain text output
-      console.log(`[Claude] Non-JSON line: ${line.substring(0, 50)}...`);
-      this.emit("message:stream", {
-        sessionId,
-        chunk: line,
-        type: "text",
-      });
+      // Not valid JSON, might be plain text output or script noise
+      // Only emit if it looks like actual content
+      if (line.length > 2 && !line.startsWith("Script ")) {
+        console.log(`[Claude] Non-JSON line: ${line.substring(0, 50)}...`);
+        this.emit("message:stream", {
+          sessionId,
+          chunk: line,
+          type: "text",
+        });
+      }
     }
   }
 
@@ -239,12 +302,15 @@ export class ClaudeProcessManager extends EventEmitter {
     }
 
     // Kill the process if running
-    if (info.process) {
-      try {
-        info.process.kill();
-      } catch (e) {
-        console.error(`[Claude] Error killing process: ${e}`);
-      }
+    if (info.process && !info.process.killed) {
+      info.process.kill("SIGTERM");
+      
+      // Force kill after timeout
+      setTimeout(() => {
+        if (info.process && !info.process.killed) {
+          info.process.kill("SIGKILL");
+        }
+      }, 5000);
     }
 
     info.session.status = "stopped";
