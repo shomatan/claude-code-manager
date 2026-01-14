@@ -218,16 +218,47 @@ export class ClaudeProcessManager extends EventEmitter {
   // Process a stream-json event
   private processStreamEvent(sessionId: string, line: string): void {
     try {
-      const event: ClaudeStreamEvent = JSON.parse(line);
-      console.log(`[Claude] Event type: ${event.type}`);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const event: any = JSON.parse(line);
+      console.log(`[Claude] Event type: ${event.type}, subtype: ${event.subtype || 'none'}`);
       
-      // Handle different event types
+      // Handle different event types based on Claude CLI stream-json format
       switch (event.type) {
+        case "system":
+          // System initialization event - ignore
+          console.log(`[Claude] System event: ${event.subtype}`);
+          break;
+
         case "assistant":
-          if (event.subtype === "text") {
+          // Assistant message - extract text from message.content array
+          if (event.message?.content) {
+            const textContent = event.message.content
+              .filter((c: { type: string }) => c.type === "text")
+              .map((c: { text: string }) => c.text)
+              .join("");
+            
+            if (textContent) {
+              console.log(`[Claude] Assistant text: ${textContent.substring(0, 50)}...`);
+              const assistantMessage: Message = {
+                id: nanoid(),
+                sessionId,
+                role: "assistant",
+                content: textContent,
+                timestamp: new Date(),
+                type: "text",
+              };
+              this.emit("message:received", assistantMessage);
+            }
+          }
+          break;
+
+        case "content_block_start":
+        case "content_block_delta":
+          // Streaming content - emit as stream
+          if (event.delta?.text) {
             this.emit("message:stream", {
               sessionId,
-              chunk: event.content || "",
+              chunk: event.delta.text,
               type: "text",
             });
           }
@@ -238,7 +269,7 @@ export class ClaudeProcessManager extends EventEmitter {
             id: nanoid(),
             sessionId,
             role: "assistant",
-            content: `Using tool: ${event.tool_name}\n${JSON.stringify(event.tool_input, null, 2)}`,
+            content: `Using tool: ${event.tool_name || event.name}\n${JSON.stringify(event.tool_input || event.input, null, 2)}`,
             timestamp: new Date(),
             type: "tool_use",
           };
@@ -250,7 +281,7 @@ export class ClaudeProcessManager extends EventEmitter {
             id: nanoid(),
             sessionId,
             role: "system",
-            content: event.result || "",
+            content: typeof event.result === "string" ? event.result : JSON.stringify(event.result),
             timestamp: new Date(),
             type: "tool_result",
           };
@@ -258,16 +289,19 @@ export class ClaudeProcessManager extends EventEmitter {
           break;
 
         case "result":
-          // Final result
-          const finalMessage: Message = {
-            id: nanoid(),
-            sessionId,
-            role: "assistant",
-            content: event.content || "",
-            timestamp: new Date(),
-            type: "text",
-          };
-          this.emit("message:received", finalMessage);
+          // Final result - contains the complete response
+          if (event.result) {
+            console.log(`[Claude] Result: ${event.result.substring(0, 50)}...`);
+            const finalMessage: Message = {
+              id: nanoid(),
+              sessionId,
+              role: "assistant",
+              content: event.result,
+              timestamp: new Date(),
+              type: "text",
+            };
+            this.emit("message:received", finalMessage);
+          }
           break;
 
         case "error":
@@ -275,12 +309,15 @@ export class ClaudeProcessManager extends EventEmitter {
             id: nanoid(),
             sessionId,
             role: "system",
-            content: event.error || "Unknown error",
+            content: event.error || event.message || "Unknown error",
             timestamp: new Date(),
             type: "error",
           };
           this.emit("message:received", errorMessage);
           break;
+
+        default:
+          console.log(`[Claude] Unhandled event type: ${event.type}`);
       }
     } catch (e) {
       // Not valid JSON, might be plain text output
