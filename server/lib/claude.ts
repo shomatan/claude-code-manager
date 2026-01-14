@@ -79,6 +79,7 @@ export class ClaudeProcessManager extends EventEmitter {
       "-p", message,
       "--output-format", "stream-json",
       "--verbose",
+      "--dangerously-skip-permissions", // Skip permission prompts in non-TTY environment
     ];
     console.log(`[Claude] Spawning: ${claudePath} ${args.join(" ")}`);
 
