@@ -24,7 +24,7 @@ async function startServer() {
   // Initialize Socket.IO
   const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
     cors: {
-      origin: process.env.NODE_ENV === "production" ? false : ["http://localhost:5173", "http://localhost:3000"],
+      origin: "*",
       methods: ["GET", "POST"],
     },
   });
@@ -196,7 +196,7 @@ async function startServer() {
     });
   });
 
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT || 3001;
 
   server.listen(port, () => {
     console.log(`Claude Code Manager server running on http://localhost:${port}/`);

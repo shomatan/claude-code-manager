@@ -59,7 +59,7 @@ export function useSocket(): UseSocketReturn {
   useEffect(() => {
     // Connect to the server (same origin in production, localhost in dev)
     const serverUrl = import.meta.env.DEV 
-      ? "http://localhost:3000" 
+      ? "http://localhost:3001" 
       : window.location.origin;
     
     const socket: TypedSocket = io(serverUrl, {
