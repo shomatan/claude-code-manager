@@ -142,7 +142,7 @@ export function MultiPaneLayout({
       </div>
 
       {/* Panes Grid */}
-      <div className={`flex-1 grid ${getGridClass()} gap-2 p-2 overflow-auto`}>
+      <div className={`flex-1 grid ${getGridClass()} gap-2 p-2 overflow-hidden auto-rows-fr`}>
         {visiblePanes.slice(0, layoutMode === "grid-4" ? 4 : layoutMode === "split-2" ? 2 : 1).map((sessionId) => {
           const session = sessions.get(sessionId);
           if (!session) return null;

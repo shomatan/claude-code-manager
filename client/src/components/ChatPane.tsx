@@ -115,39 +115,41 @@ export function ChatPane({
       </header>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 p-3">
-        <div className="space-y-3">
-          {messages.length === 0 && !streamingContent ? (
-            <div className="text-center py-8">
-              <Terminal className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-              <p className="text-xs text-muted-foreground">
-                Send a message to start
-              </p>
-            </div>
-          ) : (
-            <>
-              {messages.map((message) => (
-                <MessageBubble key={message.id} message={message} compact />
-              ))}
-              {streamingContent && (
-                <div className="flex gap-2 justify-start">
-                  <div className="max-w-[90%] rounded-md p-2 bg-muted border border-border">
-                    <div className="flex items-center gap-1 mb-1 text-[10px] text-muted-foreground">
-                      <Terminal className="w-2.5 h-2.5" />
-                      <span>Claude</span>
-                      <span className="inline-block w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
-                    </div>
-                    <div className="text-xs">
-                      <Streamdown>{streamingContent}</Streamdown>
+      <div className="flex-1 min-h-0">
+        <ScrollArea className="h-full p-3">
+          <div className="space-y-3">
+            {messages.length === 0 && !streamingContent ? (
+              <div className="text-center py-8">
+                <Terminal className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                <p className="text-xs text-muted-foreground">
+                  Send a message to start
+                </p>
+              </div>
+            ) : (
+              <>
+                {messages.map((message) => (
+                  <MessageBubble key={message.id} message={message} compact />
+                ))}
+                {streamingContent && (
+                  <div className="flex gap-2 justify-start">
+                    <div className="max-w-[90%] rounded-md p-2 bg-muted border border-border">
+                      <div className="flex items-center gap-1 mb-1 text-[10px] text-muted-foreground">
+                        <Terminal className="w-2.5 h-2.5" />
+                        <span>Claude</span>
+                        <span className="inline-block w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
+                      </div>
+                      <div className="text-xs">
+                        <Streamdown>{streamingContent}</Streamdown>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-            </>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-      </ScrollArea>
+                )}
+              </>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+        </ScrollArea>
+      </div>
 
       {/* Input */}
       <form onSubmit={handleSubmit} className="border-t border-border p-2 shrink-0">
