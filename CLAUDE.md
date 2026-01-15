@@ -27,284 +27,498 @@
 
 ---
 
-## 🚨 最優先タスク: 会話継続の実装
+# 🚨 Agent SDK V2 フルコミット実装計画
 
-### 問題
+## 公式サンプルの分析
 
-現在の`server/lib/claude.ts`は、各メッセージごとに新しい`query()`を作成しています。これにより：
-- 毎回新しいセッションが開始される
-- 会話コンテキストが維持されない
-- 毎回プロセス起動のオーバーヘッドがある
+### 1. hello-world-v2/v2-examples.ts
 
-### 解決策: TypeScript SDK V2 インターフェース
-
-Claude Agent SDK TypeScriptには**V2インターフェース（プレビュー）**があり、`send()`/`stream()`パターンで会話継続が簡単に実装できます。
-
-**参考ドキュメント**: https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview
-
-### V2 API の主要コンセプト
-
-| 関数 | 説明 |
-|------|------|
-| `unstable_v2_createSession()` | 新しいセッションを作成 |
-| `unstable_v2_resumeSession(sessionId)` | 既存セッションを再開 |
-| `session.send(message)` | メッセージを送信 |
-| `session.stream()` | レスポンスをストリーミング受信 |
-| `session.close()` | セッションを閉じる |
-
-### 実装プラン
-
-#### Step 1: claude.ts を V2 API に移行
+V2 APIの基本パターン：
 
 ```typescript
-// server/lib/claude.ts
-
 import {
   unstable_v2_createSession,
   unstable_v2_resumeSession,
-  type SDKMessage,
-  type Session as SDKSession,
-} from "@anthropic-ai/claude-agent-sdk";
-import { EventEmitter } from "events";
-import { nanoid } from "nanoid";
-import type { Session, Message } from "../../shared/types.js";
+  unstable_v2_prompt,
+} from '@anthropic-ai/claude-agent-sdk';
 
-interface SessionInfo {
-  session: Session;
-  sdkSession: SDKSession | null;  // V2 SDK セッション
-  sdkSessionId: string | null;    // 再開用のセッションID
+// 基本パターン: セッション作成 → send → stream
+await using session = unstable_v2_createSession({ model: 'sonnet' });
+await session.send('Hello!');
+for await (const msg of session.stream()) {
+  if (msg.type === 'assistant') {
+    const text = msg.message.content.find(c => c.type === 'text');
+    console.log(text?.text);
+  }
 }
 
-export class ClaudeProcessManager extends EventEmitter {
-  private sessions: Map<string, SessionInfo> = new Map();
+// マルチターン: 同じセッションで複数回send/stream
+await session.send('Follow-up question');
+for await (const msg of session.stream()) { /* ... */ }
 
-  // セッション開始
-  async startSession(worktreeId: string, worktreePath: string): Promise<Session> {
-    const sessionId = nanoid();
-    
-    const session: Session = {
-      id: sessionId,
-      worktreeId,
-      worktreePath,
-      status: "idle",
-      createdAt: new Date(),
+// セッション再開: sessionIdを保存して後で再開
+await using session = unstable_v2_resumeSession(sessionId, { model: 'sonnet' });
+```
+
+### 2. simple-chatapp/server/ai-client.ts
+
+**重要な発見:** 公式チャットアプリは**V1 API (`query()`)** を使用し、`AsyncIterable`をpromptに渡すことで会話継続を実現している。
+
+```typescript
+import { query } from "@anthropic-ai/claude-agent-sdk";
+
+class MessageQueue {
+  private messages: UserMessage[] = [];
+  private waiting: ((msg: UserMessage) => void) | null = null;
+
+  push(content: string) {
+    const msg: UserMessage = {
+      type: "user",
+      message: { role: "user", content },
     };
-
-    // V2 SDK セッションを作成
-    const sdkSession = unstable_v2_createSession({
-      cwd: worktreePath,
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
-      tools: { type: "preset", preset: "claude_code" },
-      systemPrompt: { type: "preset", preset: "claude_code" },
-    });
-
-    this.sessions.set(sessionId, {
-      session,
-      sdkSession,
-      sdkSessionId: null,
-    });
-
-    this.emit("session:created", session);
-    return session;
+    if (this.waiting) {
+      this.waiting(msg);
+      this.waiting = null;
+    } else {
+      this.messages.push(msg);
+    }
   }
 
-  // メッセージ送信（会話継続）
-  async sendMessage(sessionId: string, message: string): Promise<void> {
-    const info = this.sessions.get(sessionId);
-    if (!info || !info.sdkSession) {
-      throw new Error("Session not found");
+  async *[Symbol.asyncIterator](): AsyncIterableIterator<UserMessage> {
+    while (!this.closed) {
+      if (this.messages.length > 0) {
+        yield this.messages.shift()!;
+      } else {
+        yield await new Promise<UserMessage>(resolve => {
+          this.waiting = resolve;
+        });
+      }
     }
+  }
+}
 
-    // ユーザーメッセージを送信
-    const userMessage: Message = {
-      id: nanoid(),
-      sessionId,
-      role: "user",
-      content: message,
-      timestamp: new Date(),
-      type: "text",
+export class AgentSession {
+  private queue = new MessageQueue();
+  private outputIterator: AsyncIterator<any>;
+
+  constructor() {
+    // query()にAsyncIterableを渡すと、会話が継続する
+    this.outputIterator = query({
+      prompt: this.queue as any,
+      options: {
+        maxTurns: 100,
+        model: "opus",
+        allowedTools: ["Bash", "Read", "Write", ...],
+      },
+    })[Symbol.asyncIterator]();
+  }
+
+  sendMessage(content: string) {
+    this.queue.push(content);
+  }
+
+  async *getOutputStream() {
+    while (true) {
+      const { value, done } = await this.outputIterator.next();
+      if (done) break;
+      yield value;
+    }
+  }
+}
+```
+
+---
+
+## 実装方針: V2 Session API にフルコミット
+
+### 理由
+
+1. 公式が将来的にV2を推奨する方向
+2. `send()` / `stream()` の分離が直感的
+3. `resumeSession()` でセッション再開が容易
+4. `await using` による自動クリーンアップ
+
+---
+
+## Phase 1: バックエンド再設計
+
+### 1.1 セッションマネージャーの作成
+
+```typescript
+// server/lib/session-manager.ts
+import {
+  unstable_v2_createSession,
+  unstable_v2_resumeSession,
+  type Session,
+} from '@anthropic-ai/claude-agent-sdk';
+
+interface ManagedSession {
+  session: Session;
+  sessionId: string;
+  worktreePath: string;
+  createdAt: Date;
+  lastActivity: Date;
+}
+
+class SessionManager {
+  private sessions = new Map<string, ManagedSession>();
+
+  async createSession(worktreePath: string): Promise<ManagedSession> {
+    const session = unstable_v2_createSession({
+      model: 'sonnet',
+      cwd: worktreePath,
+      allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'],
+    });
+    
+    // 初期化メッセージからsessionIdを取得
+    let sessionId: string | undefined;
+    for await (const msg of session.stream()) {
+      if (msg.type === 'system' && msg.subtype === 'init') {
+        sessionId = msg.session_id;
+        break;
+      }
+    }
+    
+    const managed: ManagedSession = {
+      session,
+      sessionId: sessionId!,
+      worktreePath,
+      createdAt: new Date(),
+      lastActivity: new Date(),
     };
-    this.emit("message:received", userMessage);
+    
+    this.sessions.set(sessionId!, managed);
+    return managed;
+  }
 
-    info.session.status = "active";
-    this.emit("session:updated", info.session);
-
+  async resumeSession(sessionId: string): Promise<ManagedSession | null> {
+    const existing = this.sessions.get(sessionId);
+    if (existing) return existing;
+    
     try {
-      // V2 API: send() でメッセージ送信
-      await info.sdkSession.send(message);
+      const session = unstable_v2_resumeSession(sessionId, { model: 'sonnet' });
+      const managed: ManagedSession = {
+        session,
+        sessionId,
+        worktreePath: '', // 再開時は不明
+        createdAt: new Date(),
+        lastActivity: new Date(),
+      };
+      this.sessions.set(sessionId, managed);
+      return managed;
+    } catch {
+      return null;
+    }
+  }
 
-      // V2 API: stream() でレスポンス受信
-      let accumulatedContent = "";
-      for await (const msg of info.sdkSession.stream()) {
-        // セッションIDを保存（再開用）
-        if (!info.sdkSessionId && msg.session_id) {
-          info.sdkSessionId = msg.session_id;
+  getSession(sessionId: string): ManagedSession | undefined {
+    return this.sessions.get(sessionId);
+  }
+
+  async closeSession(sessionId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId);
+    if (managed) {
+      this.sessions.delete(sessionId);
+    }
+  }
+}
+
+export const sessionManager = new SessionManager();
+```
+
+### 1.2 Socket.IOハンドラーの更新
+
+```typescript
+// server/lib/socket-handlers.ts
+import { sessionManager } from './session-manager';
+
+export function setupSocketHandlers(io: Server) {
+  io.on('connection', (socket) => {
+    let currentSessionId: string | null = null;
+
+    // 新規セッション開始
+    socket.on('start_session', async (data: { worktreePath: string }) => {
+      try {
+        const managed = await sessionManager.createSession(data.worktreePath);
+        currentSessionId = managed.sessionId;
+        socket.emit('session_started', { sessionId: managed.sessionId });
+      } catch (error) {
+        socket.emit('error', { message: error.message });
+      }
+    });
+
+    // セッション再開
+    socket.on('resume_session', async (data: { sessionId: string }) => {
+      try {
+        const managed = await sessionManager.resumeSession(data.sessionId);
+        if (managed) {
+          currentSessionId = managed.sessionId;
+          socket.emit('session_resumed', { sessionId: managed.sessionId });
+        } else {
+          socket.emit('error', { message: 'Session not found' });
         }
+      } catch (error) {
+        socket.emit('error', { message: error.message });
+      }
+    });
 
-        if (msg.type === "assistant") {
-          const text = msg.message.content
-            .filter((block: any) => block.type === "text")
-            .map((block: any) => block.text)
-            .join("");
+    // メッセージ送信
+    socket.on('send_message', async (data: { message: string }) => {
+      if (!currentSessionId) {
+        socket.emit('error', { message: 'No active session' });
+        return;
+      }
+
+      const managed = sessionManager.getSession(currentSessionId);
+      if (!managed) {
+        socket.emit('error', { message: 'Session not found' });
+        return;
+      }
+
+      try {
+        // メッセージを送信
+        await managed.session.send(data.message);
+        
+        // ストリーミングレスポンスを処理
+        for await (const msg of managed.session.stream()) {
+          socket.emit('claude_message', msg);
           
-          if (text) {
-            accumulatedContent += text;
-            this.emit("message:stream", {
-              sessionId,
-              chunk: text,
-              type: "text",
+          // 完了メッセージ
+          if (msg.type === 'result') {
+            socket.emit('message_complete', {
+              success: msg.subtype === 'success',
+              cost: msg.total_cost_usd,
+              duration: msg.duration_ms,
             });
           }
         }
+      } catch (error) {
+        socket.emit('error', { message: error.message });
       }
+    });
 
-      // 完了メッセージ
-      if (accumulatedContent) {
-        const assistantMessage: Message = {
-          id: nanoid(),
-          sessionId,
-          role: "assistant",
-          content: accumulatedContent,
-          timestamp: new Date(),
-          type: "text",
-        };
-        this.emit("message:received", assistantMessage);
-      }
-
-      info.session.status = "idle";
-      this.emit("session:updated", info.session);
-      this.emit("message:complete", { sessionId, messageId: nanoid() });
-
-    } catch (error) {
-      console.error(`[Claude] Error: ${error}`);
-      info.session.status = "error";
-      this.emit("session:updated", info.session);
-    }
-  }
-
-  // セッション停止
-  stopSession(sessionId: string): void {
-    const info = this.sessions.get(sessionId);
-    if (!info) return;
-
-    // V2 API: セッションを閉じる
-    if (info.sdkSession) {
-      info.sdkSession.close();
-    }
-
-    info.session.status = "stopped";
-    this.emit("session:stopped", sessionId);
-    this.sessions.delete(sessionId);
-  }
+    socket.on('disconnect', () => {
+      currentSessionId = null;
+    });
+  });
 }
 ```
 
-#### Step 2: セッション再開機能の追加
+---
 
-ブラウザリロード後もセッションを再開できるようにする：
+## Phase 2: フロントエンド更新
+
+### 2.1 セッション状態管理
 
 ```typescript
-// セッション再開
-async resumeSession(sessionId: string, sdkSessionId: string, worktreePath: string): Promise<void> {
-  const sdkSession = unstable_v2_resumeSession(sdkSessionId, {
-    cwd: worktreePath,
-    permissionMode: "bypassPermissions",
-    allowDangerouslySkipPermissions: true,
+// client/src/hooks/useClaudeSession.ts
+import { useSocket } from './useSocket';
+import { useState, useCallback, useEffect } from 'react';
+
+interface SessionState {
+  sessionId: string | null;
+  status: 'idle' | 'connecting' | 'active' | 'error';
+  messages: ClaudeMessage[];
+}
+
+export function useClaudeSession(worktreePath: string) {
+  const socket = useSocket();
+  const [state, setState] = useState<SessionState>({
+    sessionId: null,
+    status: 'idle',
+    messages: [],
   });
 
-  // 既存のセッション情報を更新
-  const info = this.sessions.get(sessionId);
-  if (info) {
-    info.sdkSession = sdkSession;
-    info.sdkSessionId = sdkSessionId;
-  }
+  const startSession = useCallback(async () => {
+    setState(s => ({ ...s, status: 'connecting' }));
+    socket.emit('start_session', { worktreePath });
+  }, [socket, worktreePath]);
+
+  const resumeSession = useCallback(async (sessionId: string) => {
+    setState(s => ({ ...s, status: 'connecting' }));
+    socket.emit('resume_session', { sessionId });
+  }, [socket]);
+
+  const sendMessage = useCallback((message: string) => {
+    socket.emit('send_message', { message });
+    setState(s => ({
+      ...s,
+      messages: [...s.messages, { type: 'user', content: message }],
+    }));
+  }, [socket]);
+
+  useEffect(() => {
+    socket.on('session_started', ({ sessionId }) => {
+      setState(s => ({ ...s, sessionId, status: 'active' }));
+      localStorage.setItem(`session:${worktreePath}`, sessionId);
+    });
+
+    socket.on('claude_message', (msg) => {
+      setState(s => ({
+        ...s,
+        messages: [...s.messages, msg],
+      }));
+    });
+
+    socket.on('error', ({ message }) => {
+      setState(s => ({ ...s, status: 'error' }));
+      console.error('Session error:', message);
+    });
+
+    return () => {
+      socket.off('session_started');
+      socket.off('claude_message');
+      socket.off('error');
+    };
+  }, [socket, worktreePath]);
+
+  return {
+    ...state,
+    startSession,
+    resumeSession,
+    sendMessage,
+  };
 }
 ```
 
-### 実装手順チェックリスト
+### 2.2 メッセージ表示コンポーネント
 
-1. [ ] `server/lib/claude.ts` を V2 API に書き換え
-2. [ ] `unstable_v2_createSession()` でセッション作成
-3. [ ] `session.send()` / `session.stream()` でメッセージ送受信
-4. [ ] `session_id` を保存して再開可能に
-5. [ ] `session.close()` でクリーンアップ
-6. [ ] エラーハンドリングの追加
-7. [ ] フロントエンドでのメッセージ表示修正
+```typescript
+// client/src/components/ClaudeMessage.tsx
+interface ClaudeMessageProps {
+  message: SDKMessage;
+}
+
+export function ClaudeMessage({ message }: ClaudeMessageProps) {
+  switch (message.type) {
+    case 'assistant':
+      return <AssistantMessage content={message.message.content} />;
+    
+    case 'user':
+      return <UserMessage content={message.message.content} />;
+    
+    case 'result':
+      return (
+        <ResultMessage
+          success={message.subtype === 'success'}
+          cost={message.total_cost_usd}
+          duration={message.duration_ms}
+        />
+      );
+    
+    default:
+      return null;
+  }
+}
+
+function AssistantMessage({ content }: { content: ContentBlock[] }) {
+  return (
+    <div className="flex gap-3">
+      <Avatar>Claude</Avatar>
+      <div className="flex-1">
+        {content.map((block, i) => {
+          if (block.type === 'text') {
+            return <Markdown key={i}>{block.text}</Markdown>;
+          }
+          if (block.type === 'tool_use') {
+            return <ToolUseBlock key={i} tool={block} />;
+          }
+          return null;
+        })}
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+## Phase 3: 追加機能
+
+### 3.1 セッション永続化
+
+```typescript
+// セッションIDをworktreeごとに保存
+const savedSessionId = localStorage.getItem(`session:${worktreePath}`);
+if (savedSessionId) {
+  resumeSession(savedSessionId);
+} else {
+  startSession();
+}
+```
+
+### 3.2 ツール承認UI
+
+```typescript
+socket.on('claude_message', (msg) => {
+  if (msg.type === 'tool_use' && msg.requires_approval) {
+    showApprovalDialog(msg);
+  }
+});
+```
+
+---
+
+## 実装チェックリスト
+
+### バックエンド
+
+- [ ] `@anthropic-ai/claude-agent-sdk` パッケージのインストール確認
+- [ ] `server/lib/session-manager.ts` の作成
+- [ ] `server/lib/socket-handlers.ts` の更新
+- [ ] `server/lib/claude.ts` の削除（spawn不要）
+- [ ] セッションIDの永続化（オプション）
+
+### フロントエンド
+
+- [ ] `useClaudeSession` フックの作成
+- [ ] `ClaudeMessage` コンポーネントの作成
+- [ ] セッション状態のUI表示
+- [ ] ツール承認ダイアログ
+
+### テスト
+
+- [ ] セッション作成のテスト
+- [ ] マルチターン会話のテスト
+- [ ] セッション再開のテスト
+- [ ] エラーハンドリングのテスト
 
 ---
 
 ## 技術スタック
 
-```
-フロントエンド:
-- React 19
-- TypeScript
-- Tailwind CSS 4
-- shadcn/ui
-- Socket.IO Client
-- Wouter (ルーティング)
-
-バックエンド:
-- Express
-- Socket.IO
-- Claude Agent SDK (@anthropic-ai/claude-agent-sdk)
-- nanoid
-
-ビルドツール:
-- Vite
-- esbuild
-- tsx (開発時)
-```
+| レイヤー | 技術 |
+|---------|------|
+| Frontend | React 19, TailwindCSS 4, shadcn/ui |
+| Backend | Express, Socket.IO |
+| Claude通信 | `@anthropic-ai/claude-agent-sdk` (V2 API) |
+| 状態管理 | React hooks + Context |
 
 ## ディレクトリ構造
 
 ```
 claude-code-manager/
-├── client/                    # フロントエンド
-│   ├── src/
-│   │   ├── components/        # UIコンポーネント
-│   │   │   ├── Dashboard.tsx  # メインダッシュボード
-│   │   │   ├── ChatPane.tsx   # チャットUI
-│   │   │   ├── Sidebar.tsx    # サイドバー
-│   │   │   └── ui/            # shadcn/ui コンポーネント
-│   │   ├── hooks/
-│   │   │   └── useSocket.ts   # Socket.IO フック
-│   │   ├── pages/
-│   │   │   └── Home.tsx       # ホームページ
-│   │   └── App.tsx            # ルート
-│   └── index.html
-├── server/                    # バックエンド
-│   ├── index.ts               # Expressサーバー
-│   └── lib/
-│       ├── claude.ts          # Claude Agent SDK統合 ← 要修正
-│       └── git.ts             # Git worktree操作
-├── shared/                    # 共有型定義
-│   └── types.ts
-└── package.json
+├── client/
+│   └── src/
+│       ├── components/
+│       │   ├── ClaudeMessage.tsx    # メッセージ表示
+│       │   ├── ChatInput.tsx        # 入力フォーム
+│       │   └── SessionStatus.tsx    # セッション状態
+│       ├── hooks/
+│       │   ├── useClaudeSession.ts  # セッション管理
+│       │   └── useSocket.ts         # Socket.IO
+│       └── pages/
+│           └── Chat.tsx             # チャット画面
+├── server/
+│   ├── lib/
+│   │   ├── session-manager.ts       # セッション管理（新規）
+│   │   └── socket-handlers.ts       # Socket.IOハンドラー（更新）
+│   └── index.ts
+└── shared/
+    └── types.ts                     # 共通型定義
 ```
 
-## 開発コマンド
-
-```bash
-# 依存関係のインストール
-pnpm install
-
-# フロントエンドのみ起動
-pnpm dev
-
-# フルスタック開発（推奨）
-pnpm dev:full
-
-# 型チェック
-pnpm check
-
-# ビルド
-pnpm build
-
-# 本番実行
-pnpm start
-```
+---
 
 ## Socket.IOイベント一覧
 
@@ -312,62 +526,25 @@ pnpm start
 
 | イベント | データ | 説明 |
 |----------|--------|------|
-| `repo:select` | `path: string` | リポジトリを選択 |
-| `worktree:list` | `repoPath: string` | worktree一覧を取得 |
-| `worktree:create` | `{ repoPath, branchName, baseBranch? }` | worktreeを作成 |
-| `worktree:delete` | `{ repoPath, worktreePath }` | worktreeを削除 |
-| `session:start` | `{ worktreeId, worktreePath }` | セッションを開始 |
-| `session:stop` | `sessionId: string` | セッションを停止 |
-| `session:send` | `{ sessionId, message }` | メッセージを送信 |
+| `start_session` | `{ worktreePath }` | 新規セッション開始 |
+| `resume_session` | `{ sessionId }` | セッション再開 |
+| `send_message` | `{ message }` | メッセージ送信 |
 
 ### サーバー → クライアント
 
 | イベント | データ | 説明 |
 |----------|--------|------|
-| `repo:set` | `path: string` | リポジトリが設定された |
-| `repo:error` | `error: string` | リポジトリエラー |
-| `worktree:list` | `Worktree[]` | worktree一覧 |
-| `worktree:created` | `Worktree` | worktreeが作成された |
-| `worktree:error` | `error: string` | worktreeエラー |
-| `session:created` | `Session` | セッションが作成された |
-| `session:updated` | `Session` | セッション状態が更新された |
-| `session:stopped` | `sessionId: string` | セッションが停止した |
-| `session:error` | `{ sessionId, error }` | セッションエラー |
-| `message:received` | `Message` | メッセージを受信 |
-| `message:stream` | `{ sessionId, chunk }` | ストリーミングチャンク |
-| `message:complete` | `{ sessionId, messageId }` | メッセージ完了 |
+| `session_started` | `{ sessionId }` | セッション開始完了 |
+| `session_resumed` | `{ sessionId }` | セッション再開完了 |
+| `claude_message` | SDKMessage | Claudeからのメッセージ |
+| `message_complete` | `{ success, cost, duration }` | メッセージ完了 |
+| `error` | `{ message }` | エラー |
 
-## デザインガイドライン
-
-**テーマ**: Terminal-Inspired Dark Mode
-
-| 要素 | 値 |
-|------|-----|
-| 背景色 | `#0D1117` |
-| アクセント（緑） | `#00FF88` |
-| アクセント（シアン） | `#00D4FF` |
-| フォント | JetBrains Mono |
-
-## 環境変数
-
-| 変数 | デフォルト | 説明 |
-|------|-----------|------|
-| `PORT` | `3001` | バックエンドサーバーのポート |
-| `ANTHROPIC_API_KEY` | - | Anthropic APIキー（SDK使用時） |
-
-## 既知の問題
-
-1. **会話継続**: 現在は各メッセージごとに新しいセッションを作成している（V2 APIで解決予定）
-2. **ユーザーメッセージ表示**: ChatPaneでユーザーメッセージが表示されない
-3. **権限プロンプト**: `bypassPermissions`モードで回避中
+---
 
 ## 参考リンク
 
-- [Claude Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview)
-- [TypeScript SDK Reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
-- [TypeScript SDK V2 (Preview)](https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview) ← 推奨
-- [GitHub Repository](https://github.com/shomatan/claude-code-manager)
-
-## 連絡先
-
-質問や不明点があれば、このリポジトリのIssueで報告してください。
+- [Claude Agent SDK TypeScript](https://github.com/anthropics/claude-agent-sdk-typescript)
+- [公式V2サンプル](https://github.com/anthropics/claude-agent-sdk-demos/tree/main/hello-world-v2)
+- [公式チャットアプリ](https://github.com/anthropics/claude-agent-sdk-demos/tree/main/simple-chatapp)
+- [類似プロジェクト解説](./docs/similar-projects-analysis.md)
