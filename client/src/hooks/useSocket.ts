@@ -81,7 +81,13 @@ export function useSocket(): UseSocketReturn {
   const [scannedRepos, setScannedRepos] = useState<RepoInfo[]>([]);
   const [isScanning, setIsScanning] = useState(false);
 
-  const [repoPath, setRepoPath] = useState<string | null>(null);
+  const [repoList, setRepoList] = useState<string[]>(() => {
+    const saved = localStorage.getItem("repoList");
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [repoPath, setRepoPath] = useState<string | null>(() => {
+    return localStorage.getItem("selectedRepoPath");
+  });
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [sessions, setSessions] = useState<Map<string, TtydSession>>(new Map());
 
@@ -104,6 +110,12 @@ export function useSocket(): UseSocketReturn {
       console.log("Socket connected");
       setIsConnected(true);
       setError(null);
+
+      // 保存されたリポジトリを自動復元
+      const savedRepoPath = localStorage.getItem("selectedRepoPath");
+      if (savedRepoPath) {
+        socket.emit("repo:select", savedRepoPath);
+      }
     });
 
     socket.on("disconnect", () => {
@@ -126,6 +138,16 @@ export function useSocket(): UseSocketReturn {
     // Repository events
     socket.on("repo:set", (path) => {
       setRepoPath(path);
+      localStorage.setItem("selectedRepoPath", path);
+
+      // リポジトリリストに追加（重複しない場合）
+      setRepoList((prev) => {
+        if (prev.includes(path)) return prev;
+        const newList = [...prev, path];
+        localStorage.setItem("repoList", JSON.stringify(newList));
+        return newList;
+      });
+
       setError(null);
     });
 
@@ -232,10 +254,20 @@ export function useSocket(): UseSocketReturn {
     socketRef.current?.emit("repo:select", path);
   }, []);
 
-  const clearRepo = useCallback(() => {
-    setRepoPath(null);
-    setWorktrees([]);
-  }, []);
+  const removeRepo = useCallback((path: string) => {
+    setRepoList((prev) => {
+      const newList = prev.filter((p) => p !== path);
+      localStorage.setItem("repoList", JSON.stringify(newList));
+      return newList;
+    });
+
+    // 削除したリポジトリが選択中の場合はクリア
+    if (repoPath === path) {
+      setRepoPath(null);
+      setWorktrees([]);
+      localStorage.removeItem("selectedRepoPath");
+    }
+  }, [repoPath]);
 
   const scanRepos = useCallback((basePath: string) => {
     socketRef.current?.emit("repo:scan", basePath);
@@ -296,9 +328,10 @@ export function useSocket(): UseSocketReturn {
     scannedRepos,
     isScanning,
     scanRepos,
+    repoList,
     repoPath,
     selectRepo,
-    clearRepo,
+    removeRepo,
     worktrees,
     createWorktree,
     deleteWorktree,

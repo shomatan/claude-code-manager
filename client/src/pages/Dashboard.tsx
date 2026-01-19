@@ -82,9 +82,10 @@ export default function Dashboard() {
     isConnected,
     error,
     allowedRepos,
+    repoList,
     repoPath,
     selectRepo,
-    clearRepo,
+    removeRepo,
     scannedRepos,
     isScanning,
     scanRepos,
@@ -116,6 +117,14 @@ export default function Dashboard() {
       toast.error(error);
     }
   }, [error]);
+
+  // リポジトリ切り替え時にビューをリセット
+  useEffect(() => {
+    setActivePanes([]);
+    setMaximizedPane(null);
+    setSelectedWorktreeId(null);
+    setViewMode("dashboard");
+  }, [repoPath]);
 
   // Find session for a worktree
   const getSessionForWorktree = (worktreeId: string): TtydSession | undefined => {
@@ -211,52 +220,96 @@ export default function Dashboard() {
   // Sidebar content component for reuse
   const SidebarContent = () => (
     <>
-      {/* Repository Path */}
+      {/* Repository List */}
       <div className="p-4 border-b border-sidebar-border">
-        <Label className="text-xs text-muted-foreground uppercase tracking-wider">Repository</Label>
-        {repoPath ? (
-          <div className="mt-2 flex items-center gap-2">
-            <div
-              className="flex-1 flex items-center gap-2 p-2 md:p-2 rounded-md bg-sidebar-accent cursor-pointer hover:bg-sidebar-accent/80 transition-colors"
-              onClick={clearRepo}
-              title="クリックして変更"
-            >
-              <FolderOpen className="w-4 h-4 md:w-4 md:h-4 text-accent shrink-0" />
-              <span className="text-sm md:text-sm font-mono text-sidebar-foreground truncate">{repoPath}</span>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-10 w-10 md:h-8 md:w-8 shrink-0"
-              onClick={refreshWorktrees}
-            >
-              <RefreshCw className="w-5 h-5 md:w-4 md:h-4" />
-            </Button>
+        <div className="flex items-center justify-between mb-2">
+          <Label className="text-xs text-muted-foreground uppercase tracking-wider">Repositories</Label>
+          {allowedRepos.length > 0 ? (
+            /* --repos オプションが指定された場合: Selectドロップダウン */
+            <Select onValueChange={selectRepo} value={repoPath || undefined}>
+              <SelectTrigger className="w-auto h-8 text-xs gap-1">
+                <Plus className="w-3 h-3" />
+              </SelectTrigger>
+              <SelectContent>
+                {allowedRepos.map((repo) => (
+                  <SelectItem key={repo} value={repo} className="font-mono text-xs">
+                    {repo.split("/").pop()}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : (
+            /* --repos オプションなしの場合: ダイアログで追加 */
+            <RepoSelectDialog
+              isOpen={isSelectRepoOpen}
+              onOpenChange={setIsSelectRepoOpen}
+              scannedRepos={scannedRepos}
+              isScanning={isScanning}
+              onScanRepos={scanRepos}
+              onSelectRepo={handleSelectRepo}
+            />
+          )}
+        </div>
+
+        {/* 登録済みリポジトリ一覧 */}
+        {repoList.length > 0 ? (
+          <div className="space-y-1">
+            {repoList.map((repo) => {
+              const isSelected = repo === repoPath;
+              const repoName = repo.split("/").pop() || repo;
+              return (
+                <div
+                  key={repo}
+                  className={`group flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors ${
+                    isSelected
+                      ? "bg-primary/20 border border-primary/30"
+                      : "hover:bg-sidebar-accent"
+                  }`}
+                  onClick={() => selectRepo(repo)}
+                >
+                  <FolderOpen className={`w-4 h-4 shrink-0 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-sm font-medium truncate ${isSelected ? "text-primary" : "text-sidebar-foreground"}`}>
+                      {repoName}
+                    </div>
+                    <div className="text-xs text-muted-foreground font-mono truncate">
+                      {repo}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {isSelected && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          refreshWorktrees();
+                        }}
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-destructive"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeRepo(repo);
+                      }}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        ) : allowedRepos.length > 0 ? (
-          /* --repos オプションが指定された場合: Selectドロップダウンを表示 */
-          <Select onValueChange={selectRepo}>
-            <SelectTrigger className="w-full mt-2 font-mono h-12 md:h-10 text-base md:text-sm">
-              <SelectValue placeholder="リポジトリを選択..." />
-            </SelectTrigger>
-            <SelectContent>
-              {allowedRepos.map((repo) => (
-                <SelectItem key={repo} value={repo} className="font-mono">
-                  {repo}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         ) : (
-          /* --repos オプションなしの場合: パス入力 → スキャン → リポジトリ選択 */
-          <RepoSelectDialog
-            isOpen={isSelectRepoOpen}
-            onOpenChange={setIsSelectRepoOpen}
-            scannedRepos={scannedRepos}
-            isScanning={isScanning}
-            onScanRepos={scanRepos}
-            onSelectRepo={handleSelectRepo}
-          />
+          <div className="text-sm text-muted-foreground text-center py-4">
+            リポジトリを追加してください
+          </div>
         )}
       </div>
 
@@ -578,7 +631,11 @@ export default function Dashboard() {
         <div className="flex-1 overflow-hidden">
           {viewMode === "dashboard" ? (
             <SessionDashboard
-              sessions={sessions}
+              sessions={new Map(
+                Array.from(sessions.entries()).filter(([_, session]) =>
+                  worktrees.some((wt) => wt.id === session.worktreeId)
+                )
+              )}
               worktrees={worktrees}
               onSelectSession={handleSelectSession}
               onStopSession={handleStopSession}

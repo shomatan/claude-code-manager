@@ -63,9 +63,8 @@ export function RepoSelectDialog({
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange} modal={false}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="w-full mt-2 justify-start gap-2 h-12 md:h-10 text-base md:text-sm">
-          <FolderOpen className="w-5 h-5 md:w-4 md:h-4" />
-          リポジトリを選択
+        <Button variant="ghost" size="icon" className="h-8 w-8">
+          <FolderOpen className="w-4 h-4" />
         </Button>
       </DialogTrigger>
       <DialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-lg mx-auto max-h-[80vh] flex flex-col">
