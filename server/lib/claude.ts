@@ -132,25 +132,15 @@ export class ClaudeProcessManager extends EventEmitter {
     info.session.status = "active";
     this.emit("session:updated", info.session);
 
-    // Create user message
-    const userMessage: Message = {
-      id: nanoid(),
-      sessionId,
-      role: "user",
-      content: message,
-      timestamp: new Date(),
-      type: "text",
-    };
-    this.emit("message:received", userMessage);
-
-    // ユーザーメッセージをDBに保存
+    // ユーザーメッセージをDBに保存（クライアント側で楽観的に表示済みなのでemitしない）
+    const userMessageId = nanoid();
     db.addMessage({
-      id: userMessage.id,
+      id: userMessageId,
       sessionId,
       role: "user",
       content: message,
       type: "text",
-      timestamp: userMessage.timestamp,
+      timestamp: new Date(),
     });
 
     // Reset accumulated content for new message
