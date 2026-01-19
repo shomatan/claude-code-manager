@@ -19,42 +19,42 @@ export class AuthManager {
   }
 
   /**
-   * Generate a random authentication token
+   * ランダムな認証トークンを生成
    */
   private generateToken(): string {
     return randomBytes(16).toString("hex");
   }
 
   /**
-   * Get the current token
+   * 現在のトークンを取得
    */
   getToken(): string {
     return this.token;
   }
 
   /**
-   * Check if authentication is enabled
+   * 認証が有効かどうかを確認
    */
   isEnabled(): boolean {
     return this.enabled;
   }
 
   /**
-   * Enable authentication
+   * 認証を有効化
    */
   enable(): void {
     this.enabled = true;
   }
 
   /**
-   * Disable authentication
+   * 認証を無効化
    */
   disable(): void {
     this.enabled = false;
   }
 
   /**
-   * Regenerate the token
+   * トークンを再生成
    */
   regenerateToken(): string {
     this.token = this.generateToken();
@@ -62,7 +62,7 @@ export class AuthManager {
   }
 
   /**
-   * Validate a token
+   * トークンを検証
    */
   validateToken(token: string | undefined): boolean {
     if (!this.enabled) {
@@ -72,9 +72,9 @@ export class AuthManager {
   }
 
   /**
-   * Check if request is from localhost
+   * ホスト名がlocalhostかどうかを判定（プライベートヘルパー）
    */
-  private isLocalhost(host: string | undefined): boolean {
+  private isLocalhostHostname(host: string | undefined): boolean {
     if (!host) return false;
     const hostname = host.split(":")[0];
     return (
@@ -85,7 +85,95 @@ export class AuthManager {
   }
 
   /**
-   * Check if path is a static asset
+   * IPアドレスがローカル（localhost または プライベートIP）かどうかを判定
+   * - 127.0.0.1, ::1: ループバック
+   * - 192.168.x.x: プライベートIP (クラスC)
+   * - 10.x.x.x: プライベートIP (クラスA)
+   * - 172.16-31.x.x: プライベートIP (クラスB)
+   */
+  private isLocalIp(ip: string): boolean {
+    // IPv6ループバック
+    if (ip === "::1") return true;
+
+    // IPv4-mapped IPv6 (::ffff:127.0.0.1 形式) から IPv4 を抽出
+    const ipv4Match = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    const ipv4 = ipv4Match ? ipv4Match[1] : ip;
+
+    // IPv4ループバック
+    if (ipv4 === "127.0.0.1") return true;
+
+    // プライベートIP範囲のチェック
+    const parts = ipv4.split(".").map(Number);
+    if (parts.length !== 4 || parts.some(isNaN)) return false;
+
+    // 10.0.0.0/8
+    if (parts[0] === 10) return true;
+
+    // 172.16.0.0/12 (172.16.x.x - 172.31.x.x)
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+
+    // 192.168.0.0/16
+    if (parts[0] === 192 && parts[1] === 168) return true;
+
+    return false;
+  }
+
+  /**
+   * HTTPリクエストがローカルからのアクセスかどうかを判定
+   * - X-Forwarded-Host があればプロキシ経由 → 外部アクセス
+   * - X-Forwarded-For があれば、クライアントIPを確認
+   * - それ以外は直接アクセスとしてhostをチェック
+   */
+  isLocalRequest(req: Request): boolean {
+    // X-Forwarded-Host があればプロキシ経由（Vite等）→ 外部扱い
+    const forwardedHost = req.headers["x-forwarded-host"];
+    if (forwardedHost) {
+      return false;
+    }
+
+    // X-Forwarded-For があればクライアントIPを確認
+    const forwardedFor = req.headers["x-forwarded-for"];
+    if (forwardedFor) {
+      // カンマ区切りの最初のIPがオリジナルクライアント
+      const clientIp =
+        typeof forwardedFor === "string"
+          ? forwardedFor.split(",")[0].trim()
+          : forwardedFor[0];
+      return this.isLocalIp(clientIp);
+    }
+
+    // 直接アクセスの場合はホスト名をチェック
+    return this.isLocalhostHostname(req.headers.host);
+  }
+
+  /**
+   * Socket.IOリクエストがローカルからのアクセスかどうかを判定
+   */
+  isLocalSocketRequest(socket: Socket): boolean {
+    const headers = socket.handshake.headers;
+
+    // X-Forwarded-Host があればプロキシ経由 → 外部扱い
+    const forwardedHost = headers["x-forwarded-host"];
+    if (forwardedHost) {
+      return false;
+    }
+
+    // X-Forwarded-For があればクライアントIPを確認
+    const forwardedFor = headers["x-forwarded-for"];
+    if (forwardedFor) {
+      const clientIp =
+        typeof forwardedFor === "string"
+          ? forwardedFor.split(",")[0].trim()
+          : forwardedFor[0];
+      return this.isLocalIp(clientIp);
+    }
+
+    // 直接アクセスの場合はホスト名をチェック
+    return this.isLocalhostHostname(headers.host);
+  }
+
+  /**
+   * パスが静的アセットかどうかを判定
    */
   private isStaticAsset(path: string): boolean {
     return (
@@ -103,7 +191,7 @@ export class AuthManager {
   }
 
   /**
-   * Express middleware for HTTP authentication
+   * HTTP認証用のExpressミドルウェア
    */
   httpMiddleware() {
     return (req: Request, res: Response, next: NextFunction) => {
@@ -111,17 +199,17 @@ export class AuthManager {
         return next();
       }
 
-      // Skip authentication for localhost
-      if (this.isLocalhost(req.headers.host)) {
+      // ローカルアクセスは認証スキップ
+      if (this.isLocalRequest(req)) {
         return next();
       }
 
-      // Skip authentication for static assets
+      // 静的アセットは認証スキップ
       if (this.isStaticAsset(req.path)) {
         return next();
       }
 
-      // Check for token in query param or header
+      // クエリパラメータまたはヘッダーからトークンを取得
       const token =
         (req.query.token as string) || req.headers["x-auth-token"];
 
@@ -134,7 +222,7 @@ export class AuthManager {
   }
 
   /**
-   * Socket.IO middleware for WebSocket authentication
+   * WebSocket認証用のSocket.IOミドルウェア
    */
   socketMiddleware() {
     return (socket: Socket, next: (err?: Error) => void) => {
@@ -142,12 +230,12 @@ export class AuthManager {
         return next();
       }
 
-      // Skip authentication for localhost
-      if (this.isLocalhost(socket.handshake.headers.host)) {
+      // ローカルアクセスは認証スキップ
+      if (this.isLocalSocketRequest(socket)) {
         return next();
       }
 
-      // Check for token in handshake auth or query
+      // handshakeのauthまたはqueryからトークンを取得
       const token =
         socket.handshake.auth?.token || socket.handshake.query?.token;
 
@@ -160,7 +248,7 @@ export class AuthManager {
   }
 
   /**
-   * Build authenticated URL
+   * 認証付きURLを構築
    */
   buildAuthUrl(baseUrl: string): string {
     if (!this.enabled) {

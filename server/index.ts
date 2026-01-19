@@ -51,10 +51,13 @@ async function startServer() {
   const server = createServer(app);
   const port = Number(process.env.PORT) || 3001;
 
-  // Enable authentication if remote access is enabled
+  // Cloudflare Access で認証するため、トークン認証は無効化
+  // if (enableRemote) {
+  //   authManager.enable();
+  //   console.log("Remote access mode enabled - authentication required");
+  // }
   if (enableRemote) {
-    authManager.enable();
-    console.log("Remote access mode enabled - authentication required");
+    console.log("Remote access mode enabled - using Cloudflare Access for authentication");
   }
 
   // Apply HTTP authentication middleware
@@ -291,12 +294,20 @@ async function startServer() {
     // Start tunnel if remote access is enabled
     if (enableRemote) {
       console.log("Starting Cloudflare Tunnel...");
-      const tunnel = new TunnelManager(port);
+      // Named Tunnel モードで起動（事前に cloudflared login が必要）
+      const tunnel = new TunnelManager({
+        localPort: port,
+        mode: "named",
+        namedTunnelOptions: {
+          tunnelName: "claude-code-manager",
+          publicUrl: "https://ccm.ignission.tech",
+        },
+      });
 
       try {
         const publicUrl = await tunnel.start();
-        const authUrl = authManager.buildAuthUrl(publicUrl);
-        await printRemoteAccessInfo(authUrl, authManager.getToken());
+        // Cloudflare Access 使用のため、トークンなしのURLを表示
+        await printRemoteAccessInfo(publicUrl, "");
 
         // Handle tunnel events
         tunnel.on("error", (error) => {
