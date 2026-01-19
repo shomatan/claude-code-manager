@@ -9,7 +9,7 @@ import { exec, execSync } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import fs from "fs";
-import type { Worktree } from "../../shared/types.js";
+import type { Worktree, RepoInfo } from "../../shared/types.js";
 
 const execAsync = promisify(exec);
 
@@ -53,6 +53,139 @@ export async function isGitRepository(dirPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * 現在のブランチ名を取得
+ * @param dirPath - Gitリポジトリのパス
+ * @returns ブランチ名（detached HEADの場合はHEADを返す）
+ */
+async function getCurrentBranch(dirPath: string): Promise<string> {
+  const safePath = validatePath(dirPath);
+
+  try {
+    const { stdout } = await execAsync("git rev-parse --abbrev-ref HEAD", {
+      cwd: safePath,
+    });
+    return stdout.trim();
+  } catch {
+    return "unknown";
+  }
+}
+
+/** スキップするディレクトリ名のセット */
+const SKIP_DIRECTORIES = new Set([
+  "node_modules",
+  ".git",
+  ".cache",
+  ".npm",
+  ".yarn",
+  ".pnpm",
+  "dist",
+  "build",
+  ".next",
+  ".nuxt",
+  "vendor",
+  "__pycache__",
+  ".venv",
+  "venv",
+  "target",
+]);
+
+/**
+ * 指定したパス配下のGitリポジトリを再帰的に探索
+ *
+ * @param basePath - 探索を開始するベースパス
+ * @param maxDepth - 最大探索階層数（デフォルト: 3）
+ * @returns 発見されたリポジトリ情報の配列
+ *
+ * @example
+ * ```typescript
+ * const repos = await scanRepositories('/Users/username/dev');
+ * // => [{ path: '/Users/username/dev/project1', name: 'project1', branch: 'main' }, ...]
+ * ```
+ */
+export async function scanRepositories(
+  basePath: string,
+  maxDepth: number = 3
+): Promise<RepoInfo[]> {
+  const safePath = validatePath(basePath);
+  const repos: RepoInfo[] = [];
+
+  /**
+   * 再帰的にディレクトリを探索
+   * @param currentPath - 現在探索中のパス
+   * @param depth - 現在の深さ
+   */
+  async function scan(currentPath: string, depth: number): Promise<void> {
+    // 最大深度に達したら終了
+    if (depth > maxDepth) {
+      return;
+    }
+
+    // ディレクトリの内容を取得
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
+    } catch {
+      // アクセス権限がない場合などはスキップ
+      return;
+    }
+
+    // .gitディレクトリが存在するかチェック
+    const hasGitDir = entries.some(
+      (entry) => entry.isDirectory() && entry.name === ".git"
+    );
+
+    if (hasGitDir) {
+      // Gitリポジトリを発見
+      const branch = await getCurrentBranch(currentPath);
+      repos.push({
+        path: currentPath,
+        name: path.basename(currentPath),
+        branch,
+      });
+      // リポジトリ内部は探索しない（サブモジュール等は除外）
+      return;
+    }
+
+    // サブディレクトリを探索
+    const subdirs = entries.filter(
+      (entry) =>
+        entry.isDirectory() &&
+        !entry.name.startsWith(".") &&
+        !SKIP_DIRECTORIES.has(entry.name)
+    );
+
+    // 並列で探索（同時実行数を制限）
+    const CONCURRENCY_LIMIT = 10;
+    for (let i = 0; i < subdirs.length; i += CONCURRENCY_LIMIT) {
+      const batch = subdirs.slice(i, i + CONCURRENCY_LIMIT);
+      await Promise.all(
+        batch.map((entry) =>
+          scan(path.join(currentPath, entry.name), depth + 1)
+        )
+      );
+    }
+  }
+
+  // ベースパスが存在するか確認
+  try {
+    const stats = await fs.promises.stat(safePath);
+    if (!stats.isDirectory()) {
+      throw new Error("指定されたパスはディレクトリではありません");
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("指定されたパスが存在しません");
+    }
+    throw error;
+  }
+
+  await scan(safePath, 1);
+
+  // パスでソートして返す
+  return repos.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 // Get the root of the git repository

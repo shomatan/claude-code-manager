@@ -72,6 +72,7 @@ import { toast } from "sonner";
 import { useSocket, type TtydSession } from "@/hooks/useSocket";
 import { MultiPaneLayout } from "@/components/MultiPaneLayout";
 import { SessionDashboard } from "@/components/SessionDashboard";
+import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import type { Worktree } from "../../../shared/types";
 
 type ViewMode = "dashboard" | "panes";
@@ -83,6 +84,10 @@ export default function Dashboard() {
     allowedRepos,
     repoPath,
     selectRepo,
+    clearRepo,
+    scannedRepos,
+    isScanning,
+    scanRepos,
     worktrees,
     createWorktree,
     deleteWorktree,
@@ -104,7 +109,6 @@ export default function Dashboard() {
   const [isSelectRepoOpen, setIsSelectRepoOpen] = useState(false);
   const [newBranchName, setNewBranchName] = useState("");
   const [baseBranch, setBaseBranch] = useState("");
-  const [repoInput, setRepoInput] = useState("");
 
   // Show error toast when error changes
   useEffect(() => {
@@ -119,12 +123,8 @@ export default function Dashboard() {
     return sessionsArray.find((s) => s.worktreeId === worktreeId);
   };
 
-  const handleSelectRepo = () => {
-    if (!repoInput.trim()) {
-      toast.error("Please enter a repository path");
-      return;
-    }
-    selectRepo(repoInput.trim());
+  const handleSelectRepo = (path: string) => {
+    selectRepo(path);
     setIsSelectRepoOpen(false);
   };
 
@@ -216,7 +216,11 @@ export default function Dashboard() {
         <Label className="text-xs text-muted-foreground uppercase tracking-wider">Repository</Label>
         {repoPath ? (
           <div className="mt-2 flex items-center gap-2">
-            <div className="flex-1 flex items-center gap-2 p-2 md:p-2 rounded-md bg-sidebar-accent">
+            <div
+              className="flex-1 flex items-center gap-2 p-2 md:p-2 rounded-md bg-sidebar-accent cursor-pointer hover:bg-sidebar-accent/80 transition-colors"
+              onClick={clearRepo}
+              title="クリックして変更"
+            >
               <FolderOpen className="w-4 h-4 md:w-4 md:h-4 text-accent shrink-0" />
               <span className="text-sm md:text-sm font-mono text-sidebar-foreground truncate">{repoPath}</span>
             </div>
@@ -244,48 +248,15 @@ export default function Dashboard() {
             </SelectContent>
           </Select>
         ) : (
-          /* --repos オプションなしの場合: 自由入力Dialog */
-          <Dialog open={isSelectRepoOpen} onOpenChange={setIsSelectRepoOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline" className="w-full mt-2 justify-start gap-2 h-12 md:h-10 text-base md:text-sm">
-                <FolderOpen className="w-5 h-5 md:w-4 md:h-4" />
-                Select Repository
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
-              <DialogHeader>
-                <DialogTitle>Select Repository</DialogTitle>
-                <DialogDescription>
-                  Enter the path to a local git repository.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="repoPath">Repository Path</Label>
-                  <Input
-                    id="repoPath"
-                    placeholder="/path/to/your/repository"
-                    value={repoInput}
-                    onChange={(e) => setRepoInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        handleSelectRepo();
-                      }
-                    }}
-                    className="font-mono h-12 md:h-10 text-base md:text-sm"
-                  />
-                </div>
-              </div>
-              <DialogFooter className="flex-col gap-2 sm:flex-row">
-                <Button variant="outline" onClick={() => setIsSelectRepoOpen(false)} className="h-12 md:h-10">
-                  Cancel
-                </Button>
-                <Button onClick={handleSelectRepo} className="glow-green h-12 md:h-10">
-                  Select
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          /* --repos オプションなしの場合: パス入力 → スキャン → リポジトリ選択 */
+          <RepoSelectDialog
+            isOpen={isSelectRepoOpen}
+            onOpenChange={setIsSelectRepoOpen}
+            scannedRepos={scannedRepos}
+            isScanning={isScanning}
+            onScanRepos={scanRepos}
+            onSelectRepo={handleSelectRepo}
+          />
         )}
       </div>
 

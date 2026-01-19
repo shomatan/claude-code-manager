@@ -17,6 +17,7 @@ import {
   createWorktree,
   deleteWorktree,
   isGitRepository,
+  scanRepositories,
 } from "./lib/git.js";
 import { sessionOrchestrator, type ManagedSession } from "./lib/session-orchestrator.js";
 import { TunnelManager } from "./lib/tunnel.js";
@@ -163,6 +164,21 @@ async function startServer() {
     socket.emit("repos:list", allowedRepos);
 
     // ===== Repository Commands =====
+
+    socket.on("repo:scan", async (basePath) => {
+      try {
+        socket.emit("repos:scanning", { basePath, status: "start" });
+        const repos = await scanRepositories(basePath);
+        socket.emit("repos:scanned", repos);
+        socket.emit("repos:scanning", { basePath, status: "complete" });
+      } catch (error) {
+        socket.emit("repos:scanning", {
+          basePath,
+          status: "error",
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
 
     socket.on("repo:select", async (repoPath) => {
       try {

@@ -13,6 +13,8 @@ import type {
   ClientToServerEvents,
   Worktree,
   Session,
+  Message,
+  RepoInfo,
 } from "../../../shared/types";
 
 // Extended session type with ttyd fields
@@ -47,6 +49,11 @@ interface UseSocketReturn {
   // Allowed repositories (from --repos option)
   allowedRepos: string[];
 
+  // Repository scanning
+  scannedRepos: RepoInfo[];
+  isScanning: boolean;
+  scanRepos: (basePath: string) => void;
+
   // Repository
   repoPath: string | null;
   selectRepo: (path: string) => void;
@@ -71,6 +78,8 @@ export function useSocket(): UseSocketReturn {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allowedRepos, setAllowedRepos] = useState<string[]>([]);
+  const [scannedRepos, setScannedRepos] = useState<RepoInfo[]>([]);
+  const [isScanning, setIsScanning] = useState(false);
 
   const [repoPath, setRepoPath] = useState<string | null>(null);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
@@ -122,6 +131,24 @@ export function useSocket(): UseSocketReturn {
 
     socket.on("repo:error", (err) => {
       setError(err);
+    });
+
+    // Repository scanning events
+    socket.on("repos:scanned", (repos) => {
+      console.log("Scanned repos:", repos.length);
+      setScannedRepos(repos);
+    });
+
+    socket.on("repos:scanning", ({ status, error: scanError }) => {
+      if (status === "start") {
+        setIsScanning(true);
+        setScannedRepos([]);
+      } else if (status === "complete") {
+        setIsScanning(false);
+      } else if (status === "error") {
+        setIsScanning(false);
+        setError(scanError || "Failed to scan repositories");
+      }
     });
 
     // Worktree events
@@ -205,6 +232,15 @@ export function useSocket(): UseSocketReturn {
     socketRef.current?.emit("repo:select", path);
   }, []);
 
+  const clearRepo = useCallback(() => {
+    setRepoPath(null);
+    setWorktrees([]);
+  }, []);
+
+  const scanRepos = useCallback((basePath: string) => {
+    socketRef.current?.emit("repo:scan", basePath);
+  }, []);
+
   // Worktree actions
   const createWorktree = useCallback(
     (branchName: string, baseBranch?: string) => {
@@ -257,8 +293,12 @@ export function useSocket(): UseSocketReturn {
     isConnected,
     error,
     allowedRepos,
+    scannedRepos,
+    isScanning,
+    scanRepos,
     repoPath,
     selectRepo,
+    clearRepo,
     worktrees,
     createWorktree,
     deleteWorktree,

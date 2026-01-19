@@ -9,6 +9,19 @@ export interface Worktree {
   isBare: boolean;
 }
 
+/**
+ * リポジトリ情報
+ * scanRepositories関数で返される型
+ */
+export interface RepoInfo {
+  /** リポジトリのフルパス */
+  path: string;
+  /** リポジトリのディレクトリ名 */
+  name: string;
+  /** 現在のブランチ名 */
+  branch: string;
+}
+
 export interface Session {
   id: string;
   worktreeId: string;
@@ -45,6 +58,8 @@ export interface ClaudeStreamEvent {
 export interface ServerToClientEvents {
   // Repository events
   "repos:list": (repos: string[]) => void;
+  "repos:scanned": (repos: RepoInfo[]) => void;
+  "repos:scanning": (data: { basePath: string; status: "start" | "complete" | "error"; error?: string }) => void;
 
   // Worktree events
   "worktree:list": (worktrees: Worktree[]) => void;
@@ -83,6 +98,7 @@ export interface ClientToServerEvents {
   "session:restore": (worktreePath: string) => void;
 
   // Repository commands
+  "repo:scan": (basePath: string) => void;
   "repo:select": (path: string) => void;
   "repo:browse": () => void;
 }
