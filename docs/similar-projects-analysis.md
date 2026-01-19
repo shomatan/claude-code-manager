@@ -273,12 +273,308 @@ if (hasPendingPermission) {
    - `~/.claude/session-signals/` にシグナルファイル
    - 正確な状態検出に使用
 
-### 推奨アプローチ
+---
 
-あなたのプロジェクトでは、**sugyan/claude-code-webui のアプローチ**が最も参考になります：
+## 3. yazinsai/claude-code-remote
 
-1. `@anthropic-ai/claude-code` パッケージを使用
-2. `query()` + `resume` で会話継続
-3. NDJSONストリーミングでリアルタイム表示
+**GitHub:** https://github.com/yazinsai/claude-code-remote
+**言語:** JavaScript (47.9%), TypeScript (14.2%), CSS (25.7%), HTML (12.2%)
 
-ただし、Agent SDK V2 (`unstable_v2_createSession`) を使えば、より洗練された実装が可能です。
+### アーキテクチャ
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│    Frontend     │     │     Backend     │     │   Claude CLI    │
+│   (Vanilla JS)  │────▶│   (Bun/Express) │────▶│     (PTY)       │
+│     PWA         │ WS  │   WebSocket     │ PTY │   node-pty      │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+         │                      │
+         │                      ├── session-manager.ts
+         │                      ├── pty-session.ts
+         │                      └── tunnel.ts (Cloudflare)
+         │
+         └── モバイル対応（QRコード接続）
+```
+
+### 技術スタック
+
+| レイヤー | 技術 |
+|---------|------|
+| Frontend | Vanilla JavaScript, xterm.js, PWA |
+| Backend | Bun, Express, WebSocket |
+| Claude通信 | PTY (疑似ターミナル) で Claude CLI を直接起動 |
+| リモートアクセス | Cloudflare Tunnel |
+| ターミナル | node-pty, xterm.js |
+
+### 重要な違い
+
+**このプロジェクトは Claude CLI バイナリを PTY で直接起動する。** SDK や API ではなく、ターミナルエミュレーションでフルターミナルアクセスを提供。
+
+### PTYセッション管理の実装
+
+```typescript
+// server/pty-session.ts より抜粋
+import { IPty, spawn } from "node-pty";
+
+export class PtySession extends EventEmitter {
+  private pty: IPty | null = null;
+  private outputHistory = "";
+  private static readonly MAX_HISTORY_SIZE = 100_000;
+
+  constructor(
+    public readonly id: string,
+    public readonly cwd: string
+  ) {
+    super();
+  }
+
+  // Claude CLIバイナリの検出（3段階）
+  private async findClaudePath(): Promise<string | null> {
+    // 1. 環境変数 CLAUDE_PATH
+    if (process.env.CLAUDE_PATH) return process.env.CLAUDE_PATH;
+
+    // 2. which claude でシステムPATHから検索
+    const whichResult = await exec("which claude");
+    if (whichResult) return whichResult;
+
+    // 3. 標準インストール位置を探索
+    const standardPaths = [
+      `${process.env.HOME}/.npm-global/bin/claude`,
+      `${process.env.HOME}/.local/bin/claude`,
+      "/usr/local/bin/claude",
+    ];
+    // ...
+  }
+
+  async start(): Promise<void> {
+    const claudePath = await this.findClaudePath();
+
+    this.pty = spawn(claudePath, [], {
+      name: "xterm-256color",
+      cols: 80,
+      rows: 24,
+      cwd: this.cwd,
+      env: { ...process.env, TERM: "xterm-256color" },
+    });
+
+    this.pty.onData((data) => {
+      this.outputHistory += data;
+      // 履歴サイズ制限
+      if (this.outputHistory.length > PtySession.MAX_HISTORY_SIZE) {
+        this.outputHistory = this.outputHistory.slice(-PtySession.MAX_HISTORY_SIZE);
+      }
+      this.emit("output", data);
+    });
+
+    this.pty.onExit(({ exitCode }) => {
+      this.emit("exit", exitCode);
+    });
+  }
+
+  // 出力のパース（ANSIコードを解析してメッセージタイプを分類）
+  parseOutput(data: string): ParsedOutput[] {
+    // ask_user: ユーザー選択肢を含むプロンプト
+    // tool_start: ファイル操作やBashコマンド
+    // diff: コード差分表示
+    // text: 通常テキスト
+    // ...
+  }
+}
+```
+
+### SessionManager の実装
+
+```typescript
+// server/session-manager.ts より抜粋
+export class SessionManager {
+  private sessions = new Map<string, PtySession>();
+
+  createSession(cwd: string): PtySession {
+    const id = crypto.randomUUID().slice(0, 8);
+    const session = new PtySession(id, cwd);
+    session.start();
+    this.sessions.set(id, session);
+    return session;
+  }
+
+  getSession(id: string): PtySession | undefined {
+    return this.sessions.get(id);
+  }
+
+  listSessions(): SessionInfo[] {
+    return Array.from(this.sessions.values()).map((s) => ({
+      id: s.id,
+      cwd: s.cwd,
+      status: s.status,
+    }));
+  }
+
+  destroySession(id: string): boolean {
+    const session = this.sessions.get(id);
+    if (!session) return false;
+    session.stop();
+    this.sessions.delete(id);
+    return true;
+  }
+
+  destroyAll(): void {
+    for (const session of this.sessions.values()) {
+      session.stop();
+    }
+    this.sessions.clear();
+  }
+}
+```
+
+### WebSocket通信パターン
+
+```typescript
+// server/index.ts より抜粋
+// バイナリ: JSON制御コマンド（認証・セッション管理）
+// テキスト: ターミナルへの生入力
+
+wss.on("connection", (ws) => {
+  const state: ClientState = {
+    authenticated: false,
+    sessionId: null,
+    outputHandler: null,
+  };
+
+  ws.on("message", (data, isBinary) => {
+    if (isBinary) {
+      // JSON制御コマンド
+      const msg = JSON.parse(data.toString());
+      handleControlMessage(ws, state, msg);
+    } else {
+      // ターミナル入力
+      if (state.authenticated && state.sessionId) {
+        const session = sessionManager.getSession(state.sessionId);
+        session?.write(data.toString());
+      }
+    }
+  });
+});
+
+function handleControlMessage(ws, state, msg) {
+  switch (msg.type) {
+    case "auth":
+      state.authenticated = validateToken(msg.token);
+      break;
+    case "session:create":
+      const session = sessionManager.createSession(msg.cwd);
+      state.sessionId = session.id;
+      // 出力をWebSocketに転送
+      session.on("output", (data) => ws.send(data));
+      break;
+    case "session:attach":
+      // 既存セッションにアタッチ
+      break;
+    case "resize":
+      session?.resize(msg.cols, msg.rows);
+      break;
+  }
+}
+```
+
+### フロントエンド（PWA対応）
+
+```javascript
+// web/app.js より抜粋
+class TerminalApp {
+  constructor() {
+    this.terminal = new Terminal({
+      fontFamily: "JetBrains Mono, monospace",
+      fontSize: 14,
+      theme: { background: "#1a1b26" },
+    });
+    this.ws = null;
+  }
+
+  connect() {
+    this.ws = new WebSocket(wsUrl);
+
+    this.ws.onmessage = (event) => {
+      if (typeof event.data === "string") {
+        // ターミナル出力
+        this.terminal.write(event.data);
+      } else {
+        // JSON制御メッセージ
+        const msg = JSON.parse(event.data);
+        this.handleControlMessage(msg);
+      }
+    };
+  }
+
+  // 制御コマンド送信（バイナリ）
+  sendControl(message) {
+    const data = new TextEncoder().encode(JSON.stringify(message));
+    this.ws.send(data);
+  }
+
+  // モバイル対応: タッチスクロール、仮想キーボード
+  setupMobileInput() {
+    // 慣性スクロール（時間定数325ms）
+    // v(t) = v0 * e^(-t/τ)
+  }
+}
+```
+
+### 特徴
+
+1. **フルターミナルアクセス**: チャットUIではなく、実際のターミナル操作
+2. **QRコード接続**: モバイルから簡単にアクセス
+3. **Cloudflare Tunnel**: ゼロコンフィグでリモートアクセス
+4. **PWA対応**: オフラインキャッシュ、Service Worker
+5. **複数セッション**: タブで切り替え可能
+6. **出力履歴**: 100KBまで保持、再接続時に復元
+
+---
+
+## 比較表
+
+| 項目 | sugyan/claude-code-webui | KyleAMathews/claude-code-ui | yazinsai/claude-code-remote |
+|------|--------------------------|----------------------------|----------------------------|
+| **目的** | ウェブインターフェース | セッション監視ダッシュボード | リモートターミナルアクセス |
+| **Claude通信** | `@anthropic-ai/claude-code` query() | ログファイル監視 | PTY でCLI直接起動 |
+| **会話継続** | `resume: sessionId` | N/A（監視のみ） | セッション維持（PTY） |
+| **ストリーミング** | NDJSON over HTTP | Durable Streams | WebSocket + xterm.js |
+| **状態管理** | フロントエンドで管理 | XState状態マシン | SessionManager |
+| **複数セッション** | 1セッション/接続 | 全セッション監視 | タブで複数管理 |
+| **UI形式** | チャットUI | Kanbanダッシュボード | フルターミナル |
+| **モバイル対応** | ❌ | ❌ | ✅ PWA + QRコード |
+| **Agent SDK使用** | ❌ (claude-code) | ❌ (ログ監視) | ❌ (PTY) |
+
+---
+
+## 推奨アプローチ
+
+あなたのプロジェクトでは、以下のアプローチが参考になります：
+
+### アーキテクチャパターン
+
+1. **yazinsai/claude-code-remote から学べること**
+   - `SessionManager` パターン: Map<string, Session>でセッション管理
+   - WebSocket通信: バイナリ（制御）とテキスト（入力）の分離
+   - 出力パース: メッセージタイプの分類ロジック
+   - 認証フロー: 接続時のトークン検証
+
+2. **sugyan/claude-code-webui から学べること**
+   - `@anthropic-ai/claude-code` パッケージの使い方
+   - `query()` + `resume` で会話継続
+   - NDJSONストリーミングでリアルタイム表示
+
+3. **KyleAMathews/claude-code-ui から学べること**
+   - ログファイル構造の理解
+   - フック機能による状態検出
+   - 複数セッションの状態管理
+
+### Agent SDK V2 への移行
+
+上記プロジェクトはいずれも Agent SDK V2 を使用していませんが、V2 API を使用することで：
+
+1. `send()` / `stream()` の分離で直感的なAPI
+2. `resumeSession()` でセッション再開が容易
+3. `await using` による自動クリーンアップ
+4. TypeScript型安全性の向上
+
+**結論**: SessionManagerパターンとWebSocket通信の設計は参考にしつつ、Claude通信には Agent SDK V2 を採用するのがベストプラクティス。
