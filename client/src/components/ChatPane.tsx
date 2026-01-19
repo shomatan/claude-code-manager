@@ -72,11 +72,11 @@ export function ChatPane({
   return (
     <div className="h-full flex flex-col bg-card border border-border rounded-lg overflow-hidden">
       {/* Header */}
-      <header className="h-10 border-b border-border flex items-center justify-between px-3 bg-sidebar shrink-0">
+      <header className="h-14 md:h-10 border-b border-border flex items-center justify-between px-4 md:px-3 bg-sidebar shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <div className={`status-indicator ${session.status}`} />
-          <GitBranch className="w-3 h-3 text-muted-foreground shrink-0" />
-          <span className="font-mono text-xs truncate text-sidebar-foreground">
+          <GitBranch className="w-4 h-4 md:w-3 md:h-3 text-muted-foreground shrink-0" />
+          <span className="font-mono text-sm md:text-xs truncate text-sidebar-foreground">
             {worktree?.branch || "Unknown"}
           </span>
         </div>
@@ -85,43 +85,43 @@ export function ChatPane({
             <Button
               variant="ghost"
               size="icon"
-              className="h-6 w-6"
+              className="h-10 w-10 md:h-6 md:w-6"
               onClick={onMaximize}
             >
               {isMaximized ? (
-                <Minimize2 className="w-3 h-3" />
+                <Minimize2 className="w-5 h-5 md:w-3 md:h-3" />
               ) : (
-                <Maximize2 className="w-3 h-3" />
+                <Maximize2 className="w-5 h-5 md:w-3 md:h-3" />
               )}
             </Button>
           )}
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6 text-destructive hover:text-destructive"
+            className="h-10 w-10 md:h-6 md:w-6 text-destructive hover:text-destructive"
             onClick={onStopSession}
           >
-            <Square className="w-3 h-3" />
+            <Square className="w-5 h-5 md:w-3 md:h-3" />
           </Button>
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6"
+            className="h-10 w-10 md:h-6 md:w-6"
             onClick={onClose}
           >
-            <X className="w-3 h-3" />
+            <X className="w-5 h-5 md:w-3 md:h-3" />
           </Button>
         </div>
       </header>
 
       {/* Messages */}
       <div className="flex-1 min-h-0">
-        <ScrollArea className="h-full p-3">
-          <div className="space-y-3">
+        <ScrollArea className="h-full p-4 md:p-3">
+          <div className="space-y-4 md:space-y-3">
             {messages.length === 0 && !streamingContent ? (
-              <div className="text-center py-8">
-                <Terminal className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                <p className="text-xs text-muted-foreground">
+              <div className="text-center py-12 md:py-8">
+                <Terminal className="w-12 h-12 md:w-8 md:h-8 text-muted-foreground mx-auto mb-3 md:mb-2" />
+                <p className="text-base md:text-xs text-muted-foreground">
                   Send a message to start
                 </p>
               </div>
@@ -132,13 +132,13 @@ export function ChatPane({
                 ))}
                 {streamingContent && (
                   <div className="flex gap-2 justify-start">
-                    <div className="max-w-[90%] rounded-md p-2 bg-muted border border-border">
-                      <div className="flex items-center gap-1 mb-1 text-[10px] text-muted-foreground">
-                        <Terminal className="w-2.5 h-2.5" />
+                    <div className="max-w-[95%] md:max-w-[90%] rounded-lg md:rounded-md p-3 md:p-2 bg-muted border border-border">
+                      <div className="flex items-center gap-1.5 md:gap-1 mb-2 md:mb-1 text-xs md:text-[10px] text-muted-foreground">
+                        <Terminal className="w-3.5 h-3.5 md:w-2.5 md:h-2.5" />
                         <span>Claude</span>
-                        <span className="inline-block w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
+                        <span className="inline-block w-2 h-2 md:w-1.5 md:h-1.5 bg-primary rounded-full animate-pulse" />
                       </div>
-                      <div className="text-xs">
+                      <div className="text-sm md:text-xs">
                         <Streamdown>{streamingContent}</Streamdown>
                       </div>
                     </div>
@@ -152,26 +152,26 @@ export function ChatPane({
       </div>
 
       {/* Input */}
-      <form onSubmit={handleSubmit} className="border-t border-border p-2 shrink-0">
+      <form onSubmit={handleSubmit} className="border-t border-border p-3 md:p-2 shrink-0">
         <div className="flex gap-2">
           <div className="flex-1 relative">
-            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-accent font-mono text-xs">
+            <span className="absolute left-3 md:left-2 top-1/2 -translate-y-1/2 text-accent font-mono text-sm md:text-xs">
               {">"}
             </span>
             <Input
               ref={inputRef}
               placeholder="Message..."
               disabled={session.status === "active"}
-              className="h-8 pl-6 text-xs font-mono bg-input border-border"
+              className="h-12 md:h-8 pl-8 md:pl-6 text-base md:text-xs font-mono bg-input border-border"
             />
           </div>
           <Button
             type="submit"
             size="icon"
-            className="h-8 w-8 glow-green"
+            className="h-12 w-12 md:h-8 md:w-8 glow-green"
             disabled={session.status === "active"}
           >
-            <Send className="w-3 h-3" />
+            <Send className="w-5 h-5 md:w-3 md:h-3" />
           </Button>
         </div>
       </form>
@@ -189,7 +189,7 @@ function MessageBubble({ message, compact }: { message: Message; compact?: boole
   return (
     <div className={`flex gap-2 ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[90%] rounded-md p-2 ${
+        className={`max-w-[95%] md:max-w-[90%] rounded-lg md:rounded-md p-3 md:p-2 ${
           isUser
             ? "bg-primary text-primary-foreground"
             : isError
@@ -200,20 +200,20 @@ function MessageBubble({ message, compact }: { message: Message; compact?: boole
         }`}
       >
         {!isUser && (
-          <div className="flex items-center gap-1 mb-1 text-[10px] text-muted-foreground">
+          <div className="flex items-center gap-1.5 md:gap-1 mb-2 md:mb-1 text-xs md:text-[10px] text-muted-foreground">
             {isError ? (
-              <AlertCircle className="w-2.5 h-2.5" />
+              <AlertCircle className="w-3.5 h-3.5 md:w-2.5 md:h-2.5" />
             ) : (
-              <Terminal className="w-2.5 h-2.5" />
+              <Terminal className="w-3.5 h-3.5 md:w-2.5 md:h-2.5" />
             )}
             <span>
               {isError ? "Error" : isToolUse ? "Tool" : isToolResult ? "Result" : "Claude"}
             </span>
           </div>
         )}
-        <div className={`text-xs ${isToolUse || isToolResult ? "font-mono text-[10px]" : ""}`}>
+        <div className={`text-sm md:text-xs ${isToolUse || isToolResult ? "font-mono text-xs md:text-[10px]" : ""}`}>
           {isToolUse || isToolResult ? (
-            <pre className="whitespace-pre-wrap break-words max-h-24 overflow-auto">
+            <pre className="whitespace-pre-wrap break-words max-h-32 md:max-h-24 overflow-auto">
               {message.content}
             </pre>
           ) : (

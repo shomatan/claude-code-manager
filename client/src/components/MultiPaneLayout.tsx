@@ -1,10 +1,11 @@
 /**
  * MultiPaneLayout Component - Grid layout for multiple chat panes
- * 
+ *
  * Design: Terminal-Inspired Dark Mode
  * - Flexible grid layout (1x1, 2x1, 2x2, etc.)
  * - Drag and drop pane reordering (future)
  * - Maximize/minimize individual panes
+ * - Mobile-first: single pane on small screens
  */
 
 import { useState } from "react";
@@ -17,6 +18,7 @@ import {
   Maximize2,
 } from "lucide-react";
 import { ChatPane } from "./ChatPane";
+import { useIsMobile } from "@/hooks/useMobile";
 import type { Session, Worktree, Message } from "../../../shared/types";
 
 type LayoutMode = "single" | "split-2" | "grid-4";
@@ -46,7 +48,11 @@ export function MultiPaneLayout({
   onMaximizePane,
   maximizedPane,
 }: MultiPaneLayoutProps) {
+  const isMobile = useIsMobile();
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("split-2");
+
+  // Force single pane on mobile
+  const effectiveLayoutMode = isMobile ? "single" : layoutMode;
 
   const getWorktreeForSession = (session: Session): Worktree | undefined => {
     return worktrees.find((w) => w.id === session.worktreeId);
@@ -85,32 +91,33 @@ export function MultiPaneLayout({
   // Determine grid layout based on mode and number of panes
   const getGridClass = () => {
     const paneCount = visiblePanes.length;
-    
-    if (layoutMode === "single" || paneCount === 1) {
+
+    if (effectiveLayoutMode === "single" || paneCount === 1) {
       return "grid-cols-1";
     }
-    
-    if (layoutMode === "split-2" || paneCount === 2) {
+
+    if (effectiveLayoutMode === "split-2" || paneCount === 2) {
       return "grid-cols-1 md:grid-cols-2";
     }
-    
-    if (layoutMode === "grid-4" || paneCount >= 3) {
+
+    if (effectiveLayoutMode === "grid-4" || paneCount >= 3) {
       return "grid-cols-1 md:grid-cols-2 xl:grid-cols-2";
     }
-    
+
     return "grid-cols-1";
   };
 
   return (
     <div className="h-full flex flex-col">
       {/* Layout Controls */}
-      <div className="h-10 border-b border-border flex items-center justify-between px-4 shrink-0 bg-sidebar">
+      <div className="h-12 md:h-10 border-b border-border flex items-center justify-between px-4 shrink-0 bg-sidebar">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">
+          <span className="text-base md:text-sm text-muted-foreground">
             {visiblePanes.length} active pane{visiblePanes.length !== 1 ? "s" : ""}
           </span>
         </div>
-        <div className="flex items-center gap-1">
+        {/* Hide layout selector on mobile - always single pane */}
+        <div className="hidden md:flex items-center gap-1">
           <Button
             variant={layoutMode === "single" ? "secondary" : "ghost"}
             size="icon"
@@ -142,8 +149,8 @@ export function MultiPaneLayout({
       </div>
 
       {/* Panes Grid */}
-      <div className={`flex-1 grid ${getGridClass()} gap-2 p-2 overflow-hidden auto-rows-fr`}>
-        {visiblePanes.slice(0, layoutMode === "grid-4" ? 4 : layoutMode === "split-2" ? 2 : 1).map((sessionId) => {
+      <div className={`flex-1 grid ${getGridClass()} gap-3 md:gap-2 p-3 md:p-2 overflow-hidden auto-rows-fr`}>
+        {visiblePanes.slice(0, effectiveLayoutMode === "grid-4" ? 4 : effectiveLayoutMode === "split-2" ? 2 : 1).map((sessionId) => {
           const session = sessions.get(sessionId);
           if (!session) return null;
 
@@ -167,9 +174,9 @@ export function MultiPaneLayout({
       </div>
 
       {/* Hidden Panes Indicator */}
-      {visiblePanes.length > (layoutMode === "grid-4" ? 4 : layoutMode === "split-2" ? 2 : 1) && (
-        <div className="h-8 border-t border-border flex items-center justify-center text-xs text-muted-foreground shrink-0">
-          +{visiblePanes.length - (layoutMode === "grid-4" ? 4 : layoutMode === "split-2" ? 2 : 1)} more session(s) hidden
+      {visiblePanes.length > (effectiveLayoutMode === "grid-4" ? 4 : effectiveLayoutMode === "split-2" ? 2 : 1) && (
+        <div className="h-10 md:h-8 border-t border-border flex items-center justify-center text-sm md:text-xs text-muted-foreground shrink-0">
+          +{visiblePanes.length - (effectiveLayoutMode === "grid-4" ? 4 : effectiveLayoutMode === "split-2" ? 2 : 1)} more session(s) hidden
         </div>
       )}
     </div>

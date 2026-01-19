@@ -77,13 +77,13 @@ export function SessionDashboard({
 
   if (sessionsArray.length === 0) {
     return (
-      <div className="h-full flex items-center justify-center">
+      <div className="h-full flex items-center justify-center p-6">
         <div className="text-center max-w-md">
-          <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6">
-            <Terminal className="w-8 h-8 text-primary" />
+          <div className="w-20 h-20 md:w-16 md:h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6">
+            <Terminal className="w-10 h-10 md:w-8 md:h-8 text-primary" />
           </div>
-          <h2 className="text-xl font-semibold mb-2">No Active Sessions</h2>
-          <p className="text-muted-foreground">
+          <h2 className="text-2xl md:text-xl font-semibold mb-3 md:mb-2">No Active Sessions</h2>
+          <p className="text-base md:text-sm text-muted-foreground">
             Start a session from the sidebar to begin working with Claude Code.
           </p>
         </div>
@@ -92,12 +92,12 @@ export function SessionDashboard({
   }
 
   return (
-    <ScrollArea className="h-full p-4">
-      <div className="mb-4">
-        <h2 className="text-lg font-semibold flex items-center gap-2">
-          <Terminal className="w-5 h-5 text-primary" />
+    <ScrollArea className="h-full p-4 md:p-4">
+      <div className="mb-5 md:mb-4">
+        <h2 className="text-xl md:text-lg font-semibold flex items-center gap-2">
+          <Terminal className="w-6 h-6 md:w-5 md:h-5 text-primary" />
           Active Sessions
-          <span className="text-sm font-normal text-muted-foreground">
+          <span className="text-base md:text-sm font-normal text-muted-foreground">
             ({sessionsArray.length})
           </span>
         </h2>
@@ -113,16 +113,16 @@ export function SessionDashboard({
           return (
             <div
               key={session.id}
-              className="group bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 transition-colors cursor-pointer"
+              className="group bg-card border border-border rounded-lg overflow-hidden hover:border-primary/50 active:border-primary/70 transition-colors cursor-pointer"
               onClick={() => onSelectSession(session.id)}
             >
               {/* Card Header */}
-              <div className="p-3 border-b border-border bg-sidebar">
+              <div className="p-4 md:p-3 border-b border-border bg-sidebar">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 min-w-0">
                     <div className={`status-indicator ${session.status}`} />
-                    <GitBranch className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <span className="font-mono text-sm truncate">
+                    <GitBranch className="w-5 h-5 md:w-4 md:h-4 text-muted-foreground shrink-0" />
+                    <span className="font-mono text-base md:text-sm truncate">
                       {worktree?.branch || "Unknown"}
                     </span>
                   </div>
@@ -133,63 +133,63 @@ export function SessionDashboard({
               </div>
 
               {/* Card Body */}
-              <div className="p-3">
+              <div className="p-4 md:p-3">
                 {/* Last Message Preview */}
-                <div className="mb-3 min-h-[60px]">
+                <div className="mb-4 md:mb-3 min-h-[70px] md:min-h-[60px]">
                   {isStreaming ? (
                     <div className="flex items-start gap-2">
-                      <Terminal className="w-3 h-3 text-primary mt-0.5 shrink-0" />
-                      <div className="text-xs text-muted-foreground line-clamp-3">
+                      <Terminal className="w-4 h-4 md:w-3 md:h-3 text-primary mt-0.5 shrink-0" />
+                      <div className="text-sm md:text-xs text-muted-foreground line-clamp-3">
                         <span className="text-primary">Processing...</span>
-                        <span className="inline-block w-1.5 h-1.5 bg-primary rounded-full animate-pulse ml-1" />
+                        <span className="inline-block w-2 h-2 md:w-1.5 md:h-1.5 bg-primary rounded-full animate-pulse ml-1" />
                       </div>
                     </div>
                   ) : lastMessage ? (
                     <div className="flex items-start gap-2">
                       {lastMessage.role === "user" ? (
-                        <MessageSquare className="w-3 h-3 text-accent mt-0.5 shrink-0" />
+                        <MessageSquare className="w-4 h-4 md:w-3 md:h-3 text-accent mt-0.5 shrink-0" />
                       ) : (
-                        <Terminal className="w-3 h-3 text-primary mt-0.5 shrink-0" />
+                        <Terminal className="w-4 h-4 md:w-3 md:h-3 text-primary mt-0.5 shrink-0" />
                       )}
-                      <p className="text-xs text-muted-foreground line-clamp-3">
+                      <p className="text-sm md:text-xs text-muted-foreground line-clamp-3">
                         {lastMessage.content}
                       </p>
                     </div>
                   ) : (
-                    <p className="text-xs text-muted-foreground italic">
+                    <p className="text-sm md:text-xs text-muted-foreground italic">
                       No messages yet
                     </p>
                   )}
                 </div>
 
                 {/* Stats */}
-                <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <div className="flex items-center gap-1">
-                    <MessageSquare className="w-3 h-3" />
+                <div className="flex items-center justify-between text-sm md:text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1.5 md:gap-1">
+                    <MessageSquare className="w-4 h-4 md:w-3 md:h-3" />
                     <span>{messageCount} messages</span>
                   </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-6 w-6"
+                      className="h-10 w-10 md:h-6 md:w-6"
                       onClick={(e) => {
                         e.stopPropagation();
                         onSelectSession(session.id);
                       }}
                     >
-                      <Play className="w-3 h-3 text-primary" />
+                      <Play className="w-5 h-5 md:w-3 md:h-3 text-primary" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-6 w-6"
+                      className="h-10 w-10 md:h-6 md:w-6"
                       onClick={(e) => {
                         e.stopPropagation();
                         onStopSession(session.id);
                       }}
                     >
-                      <Square className="w-3 h-3 text-destructive" />
+                      <Square className="w-5 h-5 md:w-3 md:h-3 text-destructive" />
                     </Button>
                   </div>
                 </div>
