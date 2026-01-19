@@ -54,6 +54,8 @@ export interface ServerToClientEvents {
   "session:updated": (session: Session) => void;
   "session:stopped": (sessionId: string) => void;
   "session:error": (data: { sessionId: string; error: string }) => void;
+  "session:restored": (data: { session: Session; messages: Message[] }) => void;
+  "session:restore_failed": (data: { worktreePath: string; error: string }) => void;
 
   // Message events
   "message:received": (message: Message) => void;
@@ -75,6 +77,7 @@ export interface ClientToServerEvents {
   "session:start": (data: { worktreeId: string; worktreePath: string }) => void;
   "session:stop": (sessionId: string) => void;
   "session:send": (data: { sessionId: string; message: string }) => void;
+  "session:restore": (worktreePath: string) => void;
 
   // Repository commands
   "repo:select": (path: string) => void;

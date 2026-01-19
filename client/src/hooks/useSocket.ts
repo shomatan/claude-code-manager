@@ -19,26 +19,33 @@ import type {
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
+// URLからトークンを抽出
+function getTokenFromUrl(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("token");
+}
+
 interface UseSocketReturn {
   isConnected: boolean;
   error: string | null;
-  
+
   // Repository
   repoPath: string | null;
   selectRepo: (path: string) => void;
-  
+
   // Worktrees
   worktrees: Worktree[];
   createWorktree: (branchName: string, baseBranch?: string) => void;
   deleteWorktree: (worktreePath: string) => void;
   refreshWorktrees: () => void;
-  
+
   // Sessions
   sessions: Map<string, Session>;
   startSession: (worktreeId: string, worktreePath: string) => void;
   stopSession: (sessionId: string) => void;
   sendMessage: (sessionId: string, message: string) => void;
-  
+  restoreSession: (worktreePath: string) => void;
+
   // Messages
   messages: Map<string, Message[]>;
   streamingContent: Map<string, string>;
@@ -62,8 +69,10 @@ export function useSocket(): UseSocketReturn {
       ? "http://localhost:3001" 
       : window.location.origin;
     
+    const token = getTokenFromUrl();
     const socket: TypedSocket = io(serverUrl, {
       transports: ["websocket", "polling"],
+      auth: token ? { token } : undefined,
     });
 
     socketRef.current = socket;
@@ -144,6 +153,26 @@ export function useSocket(): UseSocketReturn {
         }
         return next;
       });
+    });
+
+    socket.on("session:restored", ({ session, messages: restoredMessages }) => {
+      console.log("[Socket] Session restored:", session.id, "with", restoredMessages.length, "messages");
+      setSessions((prev) => {
+        const next = new Map(prev);
+        next.set(session.id, session);
+        return next;
+      });
+      setMessages((prev) => {
+        const next = new Map(prev);
+        next.set(session.id, restoredMessages);
+        return next;
+      });
+    });
+
+    socket.on("session:restore_failed", ({ worktreePath: _path, error: err }) => {
+      console.log("[Socket] Session restore failed:", err);
+      // 失敗は通常のことなので、エラー表示はしない
+      // 呼び出し元でstartSessionにフォールバックする想定
     });
 
     socket.on("session:error", ({ sessionId, error: err }) => {
@@ -265,16 +294,20 @@ export function useSocket(): UseSocketReturn {
       timestamp: new Date(),
       type: "text",
     };
-    
+
     setMessages((prev) => {
       const next = new Map(prev);
       const sessionMessages = next.get(sessionId) || [];
       next.set(sessionId, [...sessionMessages, userMessage]);
       return next;
     });
-    
+
     // Send to server
     socketRef.current?.emit("session:send", { sessionId, message });
+  }, []);
+
+  const restoreSession = useCallback((worktreePath: string) => {
+    socketRef.current?.emit("session:restore", worktreePath);
   }, []);
 
   return {
@@ -290,6 +323,7 @@ export function useSocket(): UseSocketReturn {
     startSession,
     stopSession,
     sendMessage,
+    restoreSession,
     messages,
     streamingContent,
   };

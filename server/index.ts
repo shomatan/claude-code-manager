@@ -146,13 +146,43 @@ async function startServer() {
     
     socket.on("session:start", ({ worktreeId, worktreePath }) => {
       try {
+        // claudeManager内で既存セッションが見つかった場合は
+        // session:restoredイベントがemitされる
         const session = claudeManager.startSession(worktreeId, worktreePath);
-        messageHistory.set(session.id, []);
-        socket.emit("session:created", session);
+
+        // 新規セッションの場合のみmessageHistoryを初期化
+        if (!messageHistory.has(session.id)) {
+          messageHistory.set(session.id, []);
+        }
+        // session:createdはclaudeManager内でemitされるので
+        // ここでのemitは削除
       } catch (error) {
         socket.emit("session:error", {
           sessionId: "",
           error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    socket.on("session:restore", (worktreePath) => {
+      try {
+        const result = claudeManager.restoreSession(worktreePath);
+        if (result) {
+          messageHistory.set(result.session.id, result.messages);
+          socket.emit("session:restored", {
+            session: result.session,
+            messages: result.messages
+          });
+        } else {
+          socket.emit("session:restore_failed", {
+            worktreePath,
+            error: "No existing session found"
+          });
+        }
+      } catch (error) {
+        socket.emit("session:restore_failed", {
+          worktreePath,
+          error: error instanceof Error ? error.message : "Unknown error"
         });
       }
     });
@@ -204,6 +234,11 @@ async function startServer() {
       socket.emit("message:complete", data);
     };
 
+    const onSessionRestored = (session: Session, messages: Message[]) => {
+      messageHistory.set(session.id, messages);
+      socket.emit("session:restored", { session, messages });
+    };
+
     // Register event listeners
     claudeManager.on("session:created", onSessionCreated);
     claudeManager.on("session:updated", onSessionUpdated);
@@ -211,11 +246,12 @@ async function startServer() {
     claudeManager.on("message:received", onMessageReceived);
     claudeManager.on("message:stream", onMessageStream);
     claudeManager.on("message:complete", onMessageComplete);
+    claudeManager.on("session:restored", onSessionRestored);
 
     // Cleanup on disconnect
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`);
-      
+
       // Remove event listeners
       claudeManager.off("session:created", onSessionCreated);
       claudeManager.off("session:updated", onSessionUpdated);
@@ -223,6 +259,7 @@ async function startServer() {
       claudeManager.off("message:received", onMessageReceived);
       claudeManager.off("message:stream", onMessageStream);
       claudeManager.off("message:complete", onMessageComplete);
+      claudeManager.off("session:restored", onSessionRestored);
     });
   });
 

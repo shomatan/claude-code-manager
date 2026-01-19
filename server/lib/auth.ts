@@ -72,11 +72,52 @@ export class AuthManager {
   }
 
   /**
+   * Check if request is from localhost
+   */
+  private isLocalhost(host: string | undefined): boolean {
+    if (!host) return false;
+    const hostname = host.split(":")[0];
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1"
+    );
+  }
+
+  /**
+   * Check if path is a static asset
+   */
+  private isStaticAsset(path: string): boolean {
+    return (
+      path.startsWith("/assets/") ||
+      path.endsWith(".js") ||
+      path.endsWith(".css") ||
+      path.endsWith(".woff") ||
+      path.endsWith(".woff2") ||
+      path.endsWith(".ttf") ||
+      path.endsWith(".ico") ||
+      path.endsWith(".svg") ||
+      path.endsWith(".png") ||
+      path.endsWith(".jpg")
+    );
+  }
+
+  /**
    * Express middleware for HTTP authentication
    */
   httpMiddleware() {
     return (req: Request, res: Response, next: NextFunction) => {
       if (!this.enabled) {
+        return next();
+      }
+
+      // Skip authentication for localhost
+      if (this.isLocalhost(req.headers.host)) {
+        return next();
+      }
+
+      // Skip authentication for static assets
+      if (this.isStaticAsset(req.path)) {
         return next();
       }
 
@@ -98,6 +139,11 @@ export class AuthManager {
   socketMiddleware() {
     return (socket: Socket, next: (err?: Error) => void) => {
       if (!this.enabled) {
+        return next();
+      }
+
+      // Skip authentication for localhost
+      if (this.isLocalhost(socket.handshake.headers.host)) {
         return next();
       }
 
