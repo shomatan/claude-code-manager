@@ -92,7 +92,10 @@ export function TerminalPane({
   };
 
   // Construct ttyd iframe URL
-  const ttydIframeSrc = session.ttydUrl || `/ttyd/${session.id}/`;
+  // ttydPortがある場合は直接接続（viteプロキシ経由だとWebSocket接続に問題がある）
+  const ttydIframeSrc = session.ttydPort
+    ? `http://127.0.0.1:${session.ttydPort}/`
+    : session.ttydUrl || `/ttyd/${session.id}/`;
 
   // Quick commands for mobile
   const quickCommands = [

@@ -239,9 +239,10 @@ async function startServer() {
       }
     });
 
-    socket.on("session:restore", (worktreePath) => {
+    socket.on("session:restore", async (worktreePath) => {
       try {
-        const session = sessionOrchestrator.getSessionByWorktree(worktreePath);
+        // 既存セッションを復元（ttydが起動していなければ起動）
+        const session = await sessionOrchestrator.restoreSession(worktreePath);
         if (session) {
           socket.emit("session:restored", session);
         } else {

@@ -90,8 +90,8 @@ export class TtydManager extends EventEmitter {
         "-W", // Writable
         "-p",
         port.toString(),
-        "-b",
-        "127.0.0.1", // ローカルのみ（プロキシ経由でアクセス）
+        "-i",
+        "lo0", // macOS loopback interface
         "-t",
         "fontSize=14",
         "-t",

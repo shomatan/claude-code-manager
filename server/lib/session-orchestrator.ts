@@ -217,6 +217,30 @@ export class SessionOrchestrator extends EventEmitter {
   }
 
   /**
+   * 既存セッションを復元（ttydが起動していなければ起動）
+   */
+  async restoreSession(worktreePath: string): Promise<ManagedSession | undefined> {
+    const tmuxSession = tmuxManager.getSessionByWorktree(worktreePath);
+    if (!tmuxSession) return undefined;
+
+    // ttydが起動していなければ起動
+    let ttydInstance = ttydManager.getInstance(tmuxSession.id);
+    if (!ttydInstance) {
+      ttydInstance = await ttydManager.startInstance(
+        tmuxSession.id,
+        tmuxSession.tmuxSessionName
+      );
+    }
+
+    const dbSession = db.getSessionByWorktreePath(worktreePath);
+    const worktreeId = dbSession?.worktreeId || "";
+
+    const managed = this.toManagedSession(tmuxSession, worktreeId);
+    this.emit("session:restored", managed);
+    return managed;
+  }
+
+  /**
    * 全セッションを取得
    */
   getAllSessions(): ManagedSession[] {
