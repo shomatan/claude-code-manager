@@ -69,10 +69,10 @@ import {
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMobile";
 import { toast } from "sonner";
-import { useSocket } from "@/hooks/useSocket";
+import { useSocket, type TtydSession } from "@/hooks/useSocket";
 import { MultiPaneLayout } from "@/components/MultiPaneLayout";
 import { SessionDashboard } from "@/components/SessionDashboard";
-import type { Worktree, Session } from "../../../shared/types";
+import type { Worktree } from "../../../shared/types";
 
 type ViewMode = "dashboard" | "panes";
 
@@ -91,8 +91,7 @@ export default function Dashboard() {
     startSession,
     stopSession,
     sendMessage,
-    messages,
-    streamingContent,
+    sendKey,
   } = useSocket();
 
   const isMobile = useIsMobile();
@@ -115,7 +114,7 @@ export default function Dashboard() {
   }, [error]);
 
   // Find session for a worktree
-  const getSessionForWorktree = (worktreeId: string): Session | undefined => {
+  const getSessionForWorktree = (worktreeId: string): TtydSession | undefined => {
     const sessionsArray = Array.from(sessions.values());
     return sessionsArray.find((s) => s.worktreeId === worktreeId);
   };
@@ -193,6 +192,10 @@ export default function Dashboard() {
 
   const handleSendMessage = (sessionId: string, message: string) => {
     sendMessage(sessionId, message);
+  };
+
+  const handleSendKey = (sessionId: string, key: "Enter" | "C-c" | "C-d" | "y" | "n") => {
+    sendKey(sessionId, key);
   };
 
   // Auto-add new sessions to active panes
@@ -605,8 +608,6 @@ export default function Dashboard() {
             <SessionDashboard
               sessions={sessions}
               worktrees={worktrees}
-              messages={messages}
-              streamingContent={streamingContent}
               onSelectSession={handleSelectSession}
               onStopSession={handleStopSession}
             />
@@ -616,9 +617,8 @@ export default function Dashboard() {
                 activePanes={activePanes}
                 sessions={sessions}
                 worktrees={worktrees}
-                messages={messages}
-                streamingContent={streamingContent}
                 onSendMessage={handleSendMessage}
+                onSendKey={handleSendKey}
                 onStopSession={handleStopSession}
                 onClosePane={handleClosePane}
                 onMaximizePane={handleMaximizePane}

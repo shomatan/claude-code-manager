@@ -1,10 +1,10 @@
 /**
  * SessionDashboard Component - Overview of all active sessions
- * 
+ *
  * Design: Terminal-Inspired Dark Mode
  * - Grid layout showing all active sessions
  * - Session cards with status and quick actions
- * - Click to expand into full chat view
+ * - Click to expand into full terminal view
  */
 
 import { Button } from "@/components/ui/button";
@@ -13,19 +13,18 @@ import {
   Terminal,
   Play,
   Square,
-  MessageSquare,
   GitBranch,
   Clock,
   Zap,
   AlertCircle,
+  ExternalLink,
 } from "lucide-react";
-import type { Session, Worktree, Message } from "../../../shared/types";
+import type { TtydSession } from "./TerminalPane";
+import type { Worktree } from "../../../shared/types";
 
 interface SessionDashboardProps {
-  sessions: Map<string, Session>;
+  sessions: Map<string, TtydSession>;
   worktrees: Worktree[];
-  messages: Map<string, Message[]>;
-  streamingContent: Map<string, string>;
   onSelectSession: (sessionId: string) => void;
   onStopSession: (sessionId: string) => void;
 }
@@ -33,23 +32,16 @@ interface SessionDashboardProps {
 export function SessionDashboard({
   sessions,
   worktrees,
-  messages,
-  streamingContent,
   onSelectSession,
   onStopSession,
 }: SessionDashboardProps) {
   const sessionsArray = Array.from(sessions.values());
 
-  const getWorktreeForSession = (session: Session): Worktree | undefined => {
+  const getWorktreeForSession = (session: TtydSession): Worktree | undefined => {
     return worktrees.find((w) => w.id === session.worktreeId);
   };
 
-  const getLastMessage = (sessionId: string): Message | undefined => {
-    const sessionMessages = messages.get(sessionId) || [];
-    return sessionMessages[sessionMessages.length - 1];
-  };
-
-  const getStatusColor = (status: Session["status"]) => {
+  const getStatusColor = (status: TtydSession["status"]) => {
     switch (status) {
       case "active":
         return "text-primary";
@@ -62,7 +54,7 @@ export function SessionDashboard({
     }
   };
 
-  const getStatusIcon = (status: Session["status"]) => {
+  const getStatusIcon = (status: TtydSession["status"]) => {
     switch (status) {
       case "active":
         return <Zap className="w-4 h-4 animate-pulse" />;
@@ -106,9 +98,6 @@ export function SessionDashboard({
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {sessionsArray.map((session) => {
           const worktree = getWorktreeForSession(session);
-          const lastMessage = getLastMessage(session.id);
-          const isStreaming = streamingContent.has(session.id);
-          const messageCount = (messages.get(session.id) || []).length;
 
           return (
             <div
@@ -134,39 +123,35 @@ export function SessionDashboard({
 
               {/* Card Body */}
               <div className="p-4 md:p-3">
-                {/* Last Message Preview */}
-                <div className="mb-4 md:mb-3 min-h-[70px] md:min-h-[60px]">
-                  {isStreaming ? (
-                    <div className="flex items-start gap-2">
-                      <Terminal className="w-4 h-4 md:w-3 md:h-3 text-primary mt-0.5 shrink-0" />
-                      <div className="text-sm md:text-xs text-muted-foreground line-clamp-3">
-                        <span className="text-primary">Processing...</span>
-                        <span className="inline-block w-2 h-2 md:w-1.5 md:h-1.5 bg-primary rounded-full animate-pulse ml-1" />
-                      </div>
+                {/* Session Info */}
+                <div className="mb-4 md:mb-3 space-y-2">
+                  <div className="flex items-center gap-2 text-sm md:text-xs text-muted-foreground">
+                    <Terminal className="w-4 h-4 md:w-3 md:h-3 shrink-0" />
+                    <span className="font-mono truncate">
+                      tmux: {session.tmuxSessionName || session.id}
+                    </span>
+                  </div>
+                  {session.ttydPort && (
+                    <div className="flex items-center gap-2 text-sm md:text-xs text-muted-foreground">
+                      <ExternalLink className="w-4 h-4 md:w-3 md:h-3 shrink-0" />
+                      <span className="font-mono">
+                        port: {session.ttydPort}
+                      </span>
                     </div>
-                  ) : lastMessage ? (
-                    <div className="flex items-start gap-2">
-                      {lastMessage.role === "user" ? (
-                        <MessageSquare className="w-4 h-4 md:w-3 md:h-3 text-accent mt-0.5 shrink-0" />
-                      ) : (
-                        <Terminal className="w-4 h-4 md:w-3 md:h-3 text-primary mt-0.5 shrink-0" />
-                      )}
-                      <p className="text-sm md:text-xs text-muted-foreground line-clamp-3">
-                        {lastMessage.content}
-                      </p>
-                    </div>
-                  ) : (
-                    <p className="text-sm md:text-xs text-muted-foreground italic">
-                      No messages yet
-                    </p>
                   )}
+                  <div className="text-sm md:text-xs text-muted-foreground font-mono truncate">
+                    {session.worktreePath}
+                  </div>
                 </div>
 
-                {/* Stats */}
+                {/* Actions */}
                 <div className="flex items-center justify-between text-sm md:text-xs text-muted-foreground">
                   <div className="flex items-center gap-1.5 md:gap-1">
-                    <MessageSquare className="w-4 h-4 md:w-3 md:h-3" />
-                    <span>{messageCount} messages</span>
+                    {session.ttydUrl ? (
+                      <span className="text-primary">Terminal ready</span>
+                    ) : (
+                      <span>Starting...</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                     <Button
