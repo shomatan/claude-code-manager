@@ -100,7 +100,7 @@ export class TmuxManager extends EventEmitter {
     try {
       // tmuxセッションを作成（detached mode）してclaudeを起動
       execSync(
-        `tmux new-session -d -s "${tmuxSessionName}" -c "${worktreePath}" "claude"`,
+        `tmux new-session -d -s "${tmuxSessionName}" -c "${worktreePath}" "claude --dangerously-skip-permissions"`,
         { stdio: "pipe" }
       );
     } catch (error) {
