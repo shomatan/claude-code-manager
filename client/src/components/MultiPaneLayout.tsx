@@ -1,35 +1,32 @@
 /**
- * MultiPaneLayout Component - Grid layout for multiple chat panes
+ * MultiPaneLayout Component - Grid layout for multiple terminal panes
  *
  * Design: Terminal-Inspired Dark Mode
  * - Flexible grid layout (1x1, 2x1, 2x2, etc.)
- * - Drag and drop pane reordering (future)
  * - Maximize/minimize individual panes
  * - Mobile-first: single pane on small screens
+ * - Uses ttyd iframe for terminal rendering
  */
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  LayoutGrid,
   Columns2,
   Square,
   Grid2x2,
-  Maximize2,
 } from "lucide-react";
-import { ChatPane } from "./ChatPane";
+import { TerminalPane, type TtydSession } from "./TerminalPane";
 import { useIsMobile } from "@/hooks/useMobile";
-import type { Session, Worktree, Message } from "../../../shared/types";
+import type { Worktree } from "../../../shared/types";
 
 type LayoutMode = "single" | "split-2" | "grid-4";
 
 interface MultiPaneLayoutProps {
   activePanes: string[]; // Session IDs
-  sessions: Map<string, Session>;
+  sessions: Map<string, TtydSession>;
   worktrees: Worktree[];
-  messages: Map<string, Message[]>;
-  streamingContent: Map<string, string>;
   onSendMessage: (sessionId: string, message: string) => void;
+  onSendKey: (sessionId: string, key: "Enter" | "C-c" | "C-d" | "y" | "n") => void;
   onStopSession: (sessionId: string) => void;
   onClosePane: (sessionId: string) => void;
   onMaximizePane: (sessionId: string) => void;
@@ -40,9 +37,8 @@ export function MultiPaneLayout({
   activePanes,
   sessions,
   worktrees,
-  messages,
-  streamingContent,
   onSendMessage,
+  onSendKey,
   onStopSession,
   onClosePane,
   onMaximizePane,
@@ -54,7 +50,7 @@ export function MultiPaneLayout({
   // Force single pane on mobile
   const effectiveLayoutMode = isMobile ? "single" : layoutMode;
 
-  const getWorktreeForSession = (session: Session): Worktree | undefined => {
+  const getWorktreeForSession = (session: TtydSession): Worktree | undefined => {
     return worktrees.find((w) => w.id === session.worktreeId);
   };
 
@@ -65,12 +61,11 @@ export function MultiPaneLayout({
       const worktree = getWorktreeForSession(session);
       return (
         <div className="h-full p-2">
-          <ChatPane
+          <TerminalPane
             session={session}
             worktree={worktree}
-            messages={messages.get(maximizedPane) || []}
-            streamingContent={streamingContent.get(maximizedPane) || null}
             onSendMessage={(msg) => onSendMessage(maximizedPane, msg)}
+            onSendKey={(key) => onSendKey(maximizedPane, key)}
             onStopSession={() => onStopSession(maximizedPane)}
             onClose={() => onClosePane(maximizedPane)}
             onMaximize={() => onMaximizePane(maximizedPane)}
@@ -157,13 +152,12 @@ export function MultiPaneLayout({
           const worktree = getWorktreeForSession(session);
 
           return (
-            <ChatPane
+            <TerminalPane
               key={sessionId}
               session={session}
               worktree={worktree}
-              messages={messages.get(sessionId) || []}
-              streamingContent={streamingContent.get(sessionId) || null}
               onSendMessage={(msg) => onSendMessage(sessionId, msg)}
+              onSendKey={(key) => onSendKey(sessionId, key)}
               onStopSession={() => onStopSession(sessionId)}
               onClose={() => onClosePane(sessionId)}
               onMaximize={() => onMaximizePane(sessionId)}

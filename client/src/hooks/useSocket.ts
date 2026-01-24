@@ -1,10 +1,9 @@
 /**
  * Socket.IO Client Hook
- * 
+ *
  * Provides real-time communication with the server for:
  * - Git worktree operations
- * - Claude Code session management
- * - Message streaming
+ * - ttyd/tmux-based Claude Code session management
  */
 
 import { useEffect, useRef, useCallback, useState } from "react";
@@ -14,12 +13,28 @@ import type {
   ClientToServerEvents,
   Worktree,
   Session,
-  Message,
 } from "../../../shared/types";
 
-type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
+// Extended session type with ttyd fields
+export interface TtydSession extends Session {
+  ttydUrl?: string | null;
+  ttydPort?: number | null;
+  tmuxSessionName?: string;
+}
 
-// URLからトークンを抽出
+// Extended event types
+interface ExtendedServerToClientEvents extends Omit<ServerToClientEvents, "session:created" | "session:restored"> {
+  "session:created": (session: TtydSession) => void;
+  "session:restored": (session: TtydSession) => void;
+}
+
+interface ExtendedClientToServerEvents extends ClientToServerEvents {
+  "session:key": (data: { sessionId: string; key: "Enter" | "C-c" | "C-d" | "y" | "n" }) => void;
+}
+
+type TypedSocket = Socket<ExtendedServerToClientEvents, ExtendedClientToServerEvents>;
+
+// Extract token from URL
 function getTokenFromUrl(): string | null {
   const params = new URLSearchParams(window.location.search);
   return params.get("token");
@@ -43,15 +58,12 @@ interface UseSocketReturn {
   refreshWorktrees: () => void;
 
   // Sessions
-  sessions: Map<string, Session>;
+  sessions: Map<string, TtydSession>;
   startSession: (worktreeId: string, worktreePath: string) => void;
   stopSession: (sessionId: string) => void;
   sendMessage: (sessionId: string, message: string) => void;
+  sendKey: (sessionId: string, key: "Enter" | "C-c" | "C-d" | "y" | "n") => void;
   restoreSession: (worktreePath: string) => void;
-
-  // Messages
-  messages: Map<string, Message[]>;
-  streamingContent: Map<string, string>;
 }
 
 export function useSocket(): UseSocketReturn {
@@ -62,17 +74,14 @@ export function useSocket(): UseSocketReturn {
 
   const [repoPath, setRepoPath] = useState<string | null>(null);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
-  const [sessions, setSessions] = useState<Map<string, Session>>(new Map());
-  const [messages, setMessages] = useState<Map<string, Message[]>>(new Map());
-  const [streamingContent, setStreamingContent] = useState<Map<string, string>>(new Map());
+  const [sessions, setSessions] = useState<Map<string, TtydSession>>(new Map());
 
   // Initialize socket connection
   useEffect(() => {
-    // Connect to the server (same origin in production, localhost in dev)
-    const serverUrl = import.meta.env.DEV 
-      ? "http://localhost:3001" 
+    const serverUrl = import.meta.env.DEV
+      ? "http://localhost:3001"
       : window.location.origin;
-    
+
     const token = getTokenFromUrl();
     const socket: TypedSocket = io(serverUrl, {
       transports: ["websocket", "polling"],
@@ -99,7 +108,7 @@ export function useSocket(): UseSocketReturn {
       setIsConnected(false);
     });
 
-    // Allowed repositories list (from --repos option)
+    // Allowed repositories list
     socket.on("repos:list", (repos) => {
       console.log("Allowed repos received:", repos);
       setAllowedRepos(repos);
@@ -132,16 +141,12 @@ export function useSocket(): UseSocketReturn {
       setError(err);
     });
 
-    // Session events
+    // Session events (ttyd-based)
     socket.on("session:created", (session) => {
+      console.log("[Socket] Session created:", session.id, "ttydUrl:", session.ttydUrl);
       setSessions((prev) => {
         const next = new Map(prev);
         next.set(session.id, session);
-        return next;
-      });
-      setMessages((prev) => {
-        const next = new Map(prev);
-        next.set(session.id, []);
         return next;
       });
     });
@@ -157,32 +162,22 @@ export function useSocket(): UseSocketReturn {
     socket.on("session:stopped", (sessionId) => {
       setSessions((prev) => {
         const next = new Map(prev);
-        const session = next.get(sessionId);
-        if (session) {
-          next.set(sessionId, { ...session, status: "stopped" });
-        }
+        next.delete(sessionId);
         return next;
       });
     });
 
-    socket.on("session:restored", ({ session, messages: restoredMessages }) => {
-      console.log("[Socket] Session restored:", session.id, "with", restoredMessages.length, "messages");
+    socket.on("session:restored", (session) => {
+      console.log("[Socket] Session restored:", session.id, "ttydUrl:", session.ttydUrl);
       setSessions((prev) => {
         const next = new Map(prev);
         next.set(session.id, session);
-        return next;
-      });
-      setMessages((prev) => {
-        const next = new Map(prev);
-        next.set(session.id, restoredMessages);
         return next;
       });
     });
 
     socket.on("session:restore_failed", ({ worktreePath: _path, error: err }) => {
       console.log("[Socket] Session restore failed:", err);
-      // 失敗は通常のことなので、エラー表示はしない
-      // 呼び出し元でstartSessionにフォールバックする想定
     });
 
     socket.on("session:error", ({ sessionId, error: err }) => {
@@ -199,65 +194,6 @@ export function useSocket(): UseSocketReturn {
       }
     });
 
-    // Message events
-    socket.on("message:received", (message) => {
-      console.log("[Socket] Message received:", message.id, message.role, message.content?.substring(0, 30));
-      setMessages((prev) => {
-        const next = new Map(prev);
-        const sessionMessages = next.get(message.sessionId) || [];
-        console.log("[Socket] Current messages for session:", sessionMessages.length, "Adding new message");
-        next.set(message.sessionId, [...sessionMessages, message]);
-        return next;
-      });
-      
-      // Clear streaming content when a complete message is received
-      if (message.role === "assistant") {
-        setStreamingContent((prev) => {
-          const next = new Map(prev);
-          next.delete(message.sessionId);
-          return next;
-        });
-      }
-    });
-
-    socket.on("message:stream", ({ sessionId, chunk }) => {
-      setStreamingContent((prev) => {
-        const next = new Map(prev);
-        const current = next.get(sessionId) || "";
-        next.set(sessionId, current + chunk);
-        return next;
-      });
-    });
-
-    socket.on("message:complete", ({ sessionId }) => {
-      // Move streaming content to messages if any
-      setStreamingContent((prev) => {
-        const content = prev.get(sessionId);
-        if (content) {
-          setMessages((msgPrev) => {
-            const next = new Map(msgPrev);
-            const sessionMessages = next.get(sessionId) || [];
-            next.set(sessionId, [
-              ...sessionMessages,
-              {
-                id: `stream-${Date.now()}`,
-                sessionId,
-                role: "assistant",
-                content,
-                timestamp: new Date(),
-                type: "text",
-              },
-            ]);
-            return next;
-          });
-        }
-        
-        const next = new Map(prev);
-        next.delete(sessionId);
-        return next;
-      });
-    });
-
     // Cleanup on unmount
     return () => {
       socket.disconnect();
@@ -270,15 +206,21 @@ export function useSocket(): UseSocketReturn {
   }, []);
 
   // Worktree actions
-  const createWorktree = useCallback((branchName: string, baseBranch?: string) => {
-    if (!repoPath) return;
-    socketRef.current?.emit("worktree:create", { repoPath, branchName, baseBranch });
-  }, [repoPath]);
+  const createWorktree = useCallback(
+    (branchName: string, baseBranch?: string) => {
+      if (!repoPath) return;
+      socketRef.current?.emit("worktree:create", { repoPath, branchName, baseBranch });
+    },
+    [repoPath]
+  );
 
-  const deleteWorktree = useCallback((worktreePath: string) => {
-    if (!repoPath) return;
-    socketRef.current?.emit("worktree:delete", { repoPath, worktreePath });
-  }, [repoPath]);
+  const deleteWorktree = useCallback(
+    (worktreePath: string) => {
+      if (!repoPath) return;
+      socketRef.current?.emit("worktree:delete", { repoPath, worktreePath });
+    },
+    [repoPath]
+  );
 
   const refreshWorktrees = useCallback(() => {
     if (!repoPath) return;
@@ -295,26 +237,17 @@ export function useSocket(): UseSocketReturn {
   }, []);
 
   const sendMessage = useCallback((sessionId: string, message: string) => {
-    // Add user message to local state immediately
-    const userMessage: Message = {
-      id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      sessionId,
-      role: "user",
-      content: message,
-      timestamp: new Date(),
-      type: "text",
-    };
-
-    setMessages((prev) => {
-      const next = new Map(prev);
-      const sessionMessages = next.get(sessionId) || [];
-      next.set(sessionId, [...sessionMessages, userMessage]);
-      return next;
-    });
-
-    // Send to server
+    // For ttyd approach, we just send the message to tmux
+    // No local message state management needed (ttyd handles display)
     socketRef.current?.emit("session:send", { sessionId, message });
   }, []);
+
+  const sendKey = useCallback(
+    (sessionId: string, key: "Enter" | "C-c" | "C-d" | "y" | "n") => {
+      socketRef.current?.emit("session:key", { sessionId, key });
+    },
+    []
+  );
 
   const restoreSession = useCallback((worktreePath: string) => {
     socketRef.current?.emit("session:restore", worktreePath);
@@ -334,8 +267,7 @@ export function useSocket(): UseSocketReturn {
     startSession,
     stopSession,
     sendMessage,
+    sendKey,
     restoreSession,
-    messages,
-    streamingContent,
   };
 }

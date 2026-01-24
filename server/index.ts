@@ -2,31 +2,41 @@
  * Claude Code Manager - Server
  *
  * Express server with Socket.IO for real-time communication.
- * Handles git worktree operations and Claude Code process management.
+ * Handles git worktree operations and ttyd/tmux-based Claude Code sessions.
  * Supports remote access via Cloudflare Tunnel.
  */
 
 import express from "express";
-import { createServer } from "http";
+import { createServer } from "node:http";
 import { Server } from "socket.io";
-import path from "path";
-import { fileURLToPath } from "url";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import httpProxy from "http-proxy";
 import {
   listWorktrees,
   createWorktree,
   deleteWorktree,
   isGitRepository,
 } from "./lib/git.js";
-import { claudeManager } from "./lib/claude.js";
+import { sessionOrchestrator, type ManagedSession } from "./lib/session-orchestrator.js";
 import { TunnelManager } from "./lib/tunnel.js";
 import { authManager } from "./lib/auth.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import type {
   ServerToClientEvents,
   ClientToServerEvents,
-  Message,
   Session,
 } from "../shared/types.js";
+
+// Extend types for ttyd integration
+interface ExtendedServerToClientEvents extends Omit<ServerToClientEvents, "session:created" | "session:restored"> {
+  "session:created": (session: ManagedSession) => void;
+  "session:restored": (session: ManagedSession) => void;
+}
+
+interface ExtendedClientToServerEvents extends ClientToServerEvents {
+  "session:key": (data: { sessionId: string; key: "Enter" | "C-c" | "C-d" | "y" | "n" }) => void;
+}
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -51,11 +61,21 @@ async function startServer() {
   const server = createServer(app);
   const port = Number(process.env.PORT) || 3001;
 
-  // Cloudflare Access で認証するため、トークン認証は無効化
-  // if (enableRemote) {
-  //   authManager.enable();
-  //   console.log("Remote access mode enabled - authentication required");
-  // }
+  // Create proxy for ttyd WebSocket connections
+  const ttydProxy = httpProxy.createProxyServer({
+    ws: true,
+    changeOrigin: true,
+  });
+
+  // Handle proxy errors
+  ttydProxy.on("error", (err, _req, res) => {
+    console.error("[Proxy] Error:", err.message);
+    if (res && "writeHead" in res) {
+      res.writeHead(502, { "Content-Type": "text/plain" });
+      res.end("Bad Gateway - ttyd connection failed");
+    }
+  });
+
   if (enableRemote) {
     console.log("Remote access mode enabled - using Cloudflare Access for authentication");
   }
@@ -64,7 +84,7 @@ async function startServer() {
   app.use(authManager.httpMiddleware());
 
   // Initialize Socket.IO
-  const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
+  const io = new Server<ExtendedClientToServerEvents, ExtendedServerToClientEvents>(server, {
     cors: {
       origin: "*",
       methods: ["GET", "POST"],
@@ -74,33 +94,78 @@ async function startServer() {
   // Apply Socket.IO authentication middleware
   io.use(authManager.socketMiddleware());
 
+  // ===== ttyd Proxy Routes =====
+
+  // HTTP proxy for ttyd
+  app.use("/ttyd/:sessionId", (req, res) => {
+    const { sessionId } = req.params;
+    const session = sessionOrchestrator.getSession(sessionId);
+
+    if (!session || !session.ttydPort) {
+      res.status(404).json({ error: "Session not found or ttyd not running" });
+      return;
+    }
+
+    // Rewrite path to remove /ttyd/:sessionId prefix
+    req.url = req.url?.replace(`/ttyd/${sessionId}`, "") || "/";
+    if (req.url === "") req.url = "/";
+
+    ttydProxy.web(req, res, {
+      target: `http://127.0.0.1:${session.ttydPort}`,
+    });
+  });
+
   // Serve static files from dist/public in production only
-  // In development, Vite dev server handles static files
   if (process.env.NODE_ENV === "production") {
     const staticPath = path.resolve(__dirname, "public");
     app.use(express.static(staticPath));
 
     // Handle client-side routing - serve index.html for all routes
-    app.get("*", (_req, res) => {
+    // Exclude ttyd routes
+    app.get(/^(?!\/ttyd\/).*$/, (_req, res) => {
       res.sendFile(path.join(staticPath, "index.html"));
     });
   }
 
-  // Socket.IO connection handler
+  // ===== WebSocket Upgrade Handler =====
+
+  server.on("upgrade", (req, socket, head) => {
+    const url = new URL(req.url || "", `http://${req.headers.host}`);
+    const pathname = url.pathname;
+
+    // Handle ttyd WebSocket connections
+    const ttydMatch = pathname.match(/^\/ttyd\/([^/]+)/);
+    if (ttydMatch) {
+      const sessionId = ttydMatch[1];
+      const session = sessionOrchestrator.getSession(sessionId);
+
+      if (session?.ttydPort) {
+        ttydProxy.ws(req, socket, head, {
+          target: `ws://127.0.0.1:${session.ttydPort}`,
+        });
+        return;
+      } else {
+        socket.destroy();
+        return;
+      }
+    }
+
+    // Let Socket.IO handle other WebSocket connections
+    // (Socket.IO has its own upgrade handler)
+  });
+
+  // ===== Socket.IO Connection Handler =====
+
   io.on("connection", (socket) => {
     console.log(`Client connected: ${socket.id}`);
 
     // Send allowed repos list to client on connection
     socket.emit("repos:list", allowedRepos);
 
-    // Store message history per session
-    const messageHistory: Map<string, Message[]> = new Map();
-
     // ===== Repository Commands =====
 
     socket.on("repo:select", async (repoPath) => {
       try {
-        // Check if repo is in allowed list (if --repos was specified)
         if (allowedRepos.length > 0 && !allowedRepos.includes(repoPath)) {
           socket.emit("repo:error", "Repository not in allowed list");
           return;
@@ -113,7 +178,6 @@ async function startServer() {
         }
         socket.emit("repo:set", repoPath);
 
-        // Automatically list worktrees
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", worktrees);
       } catch (error) {
@@ -122,7 +186,7 @@ async function startServer() {
     });
 
     // ===== Worktree Commands =====
-    
+
     socket.on("worktree:list", async (repoPath) => {
       try {
         const worktrees = await listWorktrees(repoPath);
@@ -136,8 +200,7 @@ async function startServer() {
       try {
         const worktree = await createWorktree(repoPath, branchName, baseBranch);
         socket.emit("worktree:created", worktree);
-        
-        // Refresh worktree list
+
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", worktrees);
       } catch (error) {
@@ -147,17 +210,14 @@ async function startServer() {
 
     socket.on("worktree:delete", async ({ repoPath, worktreePath }) => {
       try {
-        await deleteWorktree(repoPath, worktreePath);
-        
         // Find and stop any session using this worktree
-        const sessions = claudeManager.getAllSessions();
-        for (const session of sessions) {
-          if (session.worktreePath === worktreePath) {
-            claudeManager.stopSession(session.id);
-          }
+        const session = sessionOrchestrator.getSessionByWorktree(worktreePath);
+        if (session) {
+          sessionOrchestrator.stopSession(session.id);
         }
-        
-        // Refresh worktree list
+
+        await deleteWorktree(repoPath, worktreePath);
+
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", worktrees);
       } catch (error) {
@@ -166,19 +226,11 @@ async function startServer() {
     });
 
     // ===== Session Commands =====
-    
-    socket.on("session:start", ({ worktreeId, worktreePath }) => {
-      try {
-        // claudeManager内で既存セッションが見つかった場合は
-        // session:restoredイベントがemitされる
-        const session = claudeManager.startSession(worktreeId, worktreePath);
 
-        // 新規セッションの場合のみmessageHistoryを初期化
-        if (!messageHistory.has(session.id)) {
-          messageHistory.set(session.id, []);
-        }
-        // session:createdはclaudeManager内でemitされるので
-        // ここでのemitは削除
+    socket.on("session:start", async ({ worktreeId, worktreePath }) => {
+      try {
+        const session = await sessionOrchestrator.startSession(worktreeId, worktreePath);
+        socket.emit("session:created", session);
       } catch (error) {
         socket.emit("session:error", {
           sessionId: "",
@@ -189,35 +241,30 @@ async function startServer() {
 
     socket.on("session:restore", (worktreePath) => {
       try {
-        const result = claudeManager.restoreSession(worktreePath);
-        if (result) {
-          messageHistory.set(result.session.id, result.messages);
-          socket.emit("session:restored", {
-            session: result.session,
-            messages: result.messages
-          });
+        const session = sessionOrchestrator.getSessionByWorktree(worktreePath);
+        if (session) {
+          socket.emit("session:restored", session);
         } else {
           socket.emit("session:restore_failed", {
             worktreePath,
-            error: "No existing session found"
+            error: "No existing session found",
           });
         }
       } catch (error) {
         socket.emit("session:restore_failed", {
           worktreePath,
-          error: error instanceof Error ? error.message : "Unknown error"
+          error: error instanceof Error ? error.message : "Unknown error",
         });
       }
     });
 
     socket.on("session:stop", (sessionId) => {
-      claudeManager.stopSession(sessionId);
-      messageHistory.delete(sessionId);
+      sessionOrchestrator.stopSession(sessionId);
     });
 
-    socket.on("session:send", async ({ sessionId, message }) => {
+    socket.on("session:send", ({ sessionId, message }) => {
       try {
-        await claudeManager.sendMessage(sessionId, message);
+        sessionOrchestrator.sendMessage(sessionId, message);
       } catch (error) {
         socket.emit("session:error", {
           sessionId,
@@ -226,75 +273,53 @@ async function startServer() {
       }
     });
 
-    // ===== Claude Manager Event Handlers =====
-    
-    const onSessionCreated = (session: Session) => {
+    // New: Send special keys (Ctrl+C, etc.)
+    socket.on("session:key", ({ sessionId, key }) => {
+      try {
+        sessionOrchestrator.sendSpecialKey(sessionId, key);
+      } catch (error) {
+        socket.emit("session:error", {
+          sessionId,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    // ===== Session Orchestrator Event Handlers =====
+
+    const onSessionCreated = (session: ManagedSession) => {
       socket.emit("session:created", session);
     };
 
-    const onSessionUpdated = (session: Session) => {
-      socket.emit("session:updated", session);
+    const onSessionRestored = (session: ManagedSession) => {
+      socket.emit("session:restored", session);
     };
 
     const onSessionStopped = (sessionId: string) => {
       socket.emit("session:stopped", sessionId);
     };
 
-    const onMessageReceived = (message: Message) => {
-      // Store in history
-      const history = messageHistory.get(message.sessionId) || [];
-      history.push(message);
-      messageHistory.set(message.sessionId, history);
-      
-      socket.emit("message:received", message);
-    };
-
-    const onMessageStream = (data: { sessionId: string; chunk: string; type?: string }) => {
-      socket.emit("message:stream", data as { sessionId: string; chunk: string });
-    };
-
-    const onMessageComplete = (data: { sessionId: string; messageId: string }) => {
-      socket.emit("message:complete", data);
-    };
-
-    const onSessionRestored = (session: Session, messages: Message[]) => {
-      messageHistory.set(session.id, messages);
-      socket.emit("session:restored", { session, messages });
-    };
-
     // Register event listeners
-    claudeManager.on("session:created", onSessionCreated);
-    claudeManager.on("session:updated", onSessionUpdated);
-    claudeManager.on("session:stopped", onSessionStopped);
-    claudeManager.on("message:received", onMessageReceived);
-    claudeManager.on("message:stream", onMessageStream);
-    claudeManager.on("message:complete", onMessageComplete);
-    claudeManager.on("session:restored", onSessionRestored);
+    sessionOrchestrator.on("session:created", onSessionCreated);
+    sessionOrchestrator.on("session:restored", onSessionRestored);
+    sessionOrchestrator.on("session:stopped", onSessionStopped);
 
     // Cleanup on disconnect
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`);
 
-      // Remove event listeners
-      claudeManager.off("session:created", onSessionCreated);
-      claudeManager.off("session:updated", onSessionUpdated);
-      claudeManager.off("session:stopped", onSessionStopped);
-      claudeManager.off("message:received", onMessageReceived);
-      claudeManager.off("message:stream", onMessageStream);
-      claudeManager.off("message:complete", onMessageComplete);
-      claudeManager.off("session:restored", onSessionRestored);
+      sessionOrchestrator.off("session:created", onSessionCreated);
+      sessionOrchestrator.off("session:restored", onSessionRestored);
+      sessionOrchestrator.off("session:stopped", onSessionStopped);
     });
   });
 
   server.listen(port, async () => {
-    console.log(
-      `Claude Code Manager server running on http://localhost:${port}/`
-    );
+    console.log(`Claude Code Manager server running on http://localhost:${port}/`);
 
     // Start tunnel if remote access is enabled
     if (enableRemote) {
       console.log("Starting Cloudflare Tunnel...");
-      // Named Tunnel モードで起動（事前に cloudflared login が必要）
       const tunnel = new TunnelManager({
         localPort: port,
         mode: "named",
@@ -306,10 +331,8 @@ async function startServer() {
 
       try {
         const publicUrl = await tunnel.start();
-        // Cloudflare Access 使用のため、トークンなしのURLを表示
         await printRemoteAccessInfo(publicUrl, "");
 
-        // Handle tunnel events
         tunnel.on("error", (error) => {
           console.error("Tunnel error:", error.message);
         });
@@ -318,13 +341,12 @@ async function startServer() {
           console.log(`Tunnel closed with code ${code}`);
         });
 
-        // Cleanup tunnel on shutdown
-        const originalCleanup = () => {
+        const tunnelCleanup = () => {
           tunnel.stop();
         };
 
-        process.on("SIGTERM", originalCleanup);
-        process.on("SIGINT", originalCleanup);
+        process.on("SIGTERM", tunnelCleanup);
+        process.on("SIGINT", tunnelCleanup);
       } catch (error) {
         console.error(
           "Failed to start tunnel:",
@@ -336,21 +358,16 @@ async function startServer() {
   });
 
   // Graceful shutdown
-  process.on("SIGTERM", () => {
+  const shutdown = () => {
     console.log("Shutting down...");
-    claudeManager.cleanup();
+    sessionOrchestrator.cleanup();
     server.close(() => {
       process.exit(0);
     });
-  });
+  };
 
-  process.on("SIGINT", () => {
-    console.log("Shutting down...");
-    claudeManager.cleanup();
-    server.close(() => {
-      process.exit(0);
-    });
-  });
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
 startServer().catch(console.error);

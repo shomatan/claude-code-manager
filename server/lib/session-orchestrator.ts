@@ -1,0 +1,256 @@
+/**
+ * Session Orchestrator
+ *
+ * tmuxセッションとttydインスタンスを統合管理。
+ * セッションライフサイクルの統一APIを提供する。
+ */
+
+import { EventEmitter } from "node:events";
+import { tmuxManager, type TmuxSession } from "./tmux-manager.js";
+import { ttydManager, type TtydInstance } from "./ttyd-manager.js";
+import { db } from "./database.js";
+import type { Session, SessionStatus } from "../../shared/types.js";
+
+export interface ManagedSession extends Session {
+  tmuxSessionName: string;
+  ttydPort: number | null;
+  ttydUrl: string | null;
+}
+
+export class SessionOrchestrator extends EventEmitter {
+  constructor() {
+    super();
+    this.setupEventForwarding();
+    this.restoreExistingSessions();
+  }
+
+  /**
+   * 下位マネージャーからのイベントを転送
+   */
+  private setupEventForwarding(): void {
+    tmuxManager.on("session:created", (tmuxSession: TmuxSession) => {
+      // セッション作成時はstartSession内で処理するのでここでは何もしない
+    });
+
+    tmuxManager.on("session:stopped", (sessionId: string) => {
+      ttydManager.stopInstance(sessionId);
+      this.emit("session:stopped", sessionId);
+    });
+
+    ttydManager.on("instance:stopped", (sessionId: string) => {
+      // ttydが停止してもtmuxセッションは維持
+    });
+  }
+
+  /**
+   * 前回の実行から残っているセッションを復元
+   */
+  private restoreExistingSessions(): void {
+    const tmuxSessions = tmuxManager.getAllSessions();
+
+    for (const tmuxSession of tmuxSessions) {
+      // DBにセッション情報があれば更新
+      const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
+      if (dbSession) {
+        console.log(
+          `[Orchestrator] Restored session: ${tmuxSession.tmuxSessionName} -> ${dbSession.id}`
+        );
+      }
+    }
+  }
+
+  /**
+   * TmuxSessionをManagedSessionに変換
+   */
+  private toManagedSession(
+    tmuxSession: TmuxSession,
+    worktreeId: string
+  ): ManagedSession {
+    const ttydInstance = ttydManager.getInstance(tmuxSession.id);
+    return {
+      id: tmuxSession.id,
+      worktreeId,
+      worktreePath: tmuxSession.worktreePath,
+      status: this.mapTmuxStatus(tmuxSession.status),
+      createdAt: tmuxSession.createdAt,
+      tmuxSessionName: tmuxSession.tmuxSessionName,
+      ttydPort: ttydInstance?.port || null,
+      ttydUrl: ttydInstance ? `/ttyd/${tmuxSession.id}/` : null,
+    };
+  }
+
+  /**
+   * tmuxのステータスをSessionStatusにマップ
+   */
+  private mapTmuxStatus(
+    status: TmuxSession["status"]
+  ): SessionStatus {
+    switch (status) {
+      case "running":
+        return "active";
+      case "starting":
+        return "idle";
+      case "stopped":
+        return "stopped";
+      case "error":
+        return "error";
+      default:
+        return "idle";
+    }
+  }
+
+  /**
+   * 新規セッションを開始
+   */
+  async startSession(
+    worktreeId: string,
+    worktreePath: string
+  ): Promise<ManagedSession> {
+    // 既存セッションがあれば再利用
+    const existingTmux = tmuxManager.getSessionByWorktree(worktreePath);
+    if (existingTmux) {
+      // ttydが起動していなければ起動
+      let ttydInstance = ttydManager.getInstance(existingTmux.id);
+      if (!ttydInstance) {
+        ttydInstance = await ttydManager.startInstance(
+          existingTmux.id,
+          existingTmux.tmuxSessionName
+        );
+      }
+
+      const managed = this.toManagedSession(existingTmux, worktreeId);
+      this.emit("session:restored", managed);
+      return managed;
+    }
+
+    // 新規tmuxセッションを作成
+    const tmuxSession = await tmuxManager.createSession(worktreePath);
+
+    // ttydインスタンスを起動
+    const ttydInstance = await ttydManager.startInstance(
+      tmuxSession.id,
+      tmuxSession.tmuxSessionName
+    );
+
+    // DBに保存
+    try {
+      db.createSession({
+        id: tmuxSession.id,
+        worktreeId,
+        worktreePath,
+        status: "active",
+      });
+    } catch (error) {
+      // 既存エントリがある場合はステータスを更新
+      db.updateSessionStatus(tmuxSession.id, "active");
+    }
+
+    const managed: ManagedSession = {
+      id: tmuxSession.id,
+      worktreeId,
+      worktreePath,
+      status: "active",
+      createdAt: tmuxSession.createdAt,
+      tmuxSessionName: tmuxSession.tmuxSessionName,
+      ttydPort: ttydInstance.port,
+      ttydUrl: `/ttyd/${tmuxSession.id}/`,
+    };
+
+    this.emit("session:created", managed);
+    return managed;
+  }
+
+  /**
+   * メッセージを送信
+   */
+  sendMessage(sessionId: string, message: string): void {
+    tmuxManager.sendKeys(sessionId, message);
+
+    const session = tmuxManager.getSession(sessionId);
+    if (session) {
+      db.updateSessionStatus(sessionId, "active");
+    }
+  }
+
+  /**
+   * 特殊キーを送信
+   */
+  sendSpecialKey(sessionId: string, key: "Enter" | "C-c" | "C-d" | "y" | "n"): void {
+    tmuxManager.sendSpecialKey(sessionId, key);
+  }
+
+  /**
+   * セッションを停止
+   */
+  stopSession(sessionId: string): void {
+    ttydManager.stopInstance(sessionId);
+    tmuxManager.killSession(sessionId);
+    db.updateSessionStatus(sessionId, "stopped");
+    this.emit("session:stopped", sessionId);
+  }
+
+  /**
+   * IDでセッションを取得
+   */
+  getSession(sessionId: string): ManagedSession | undefined {
+    const tmuxSession = tmuxManager.getSession(sessionId);
+    if (!tmuxSession) return undefined;
+
+    // DBからworktreeIdを取得
+    const dbSession = db.getSessionByWorktreePath(tmuxSession.worktreePath);
+    const worktreeId = dbSession?.worktreeId || "";
+
+    return this.toManagedSession(tmuxSession, worktreeId);
+  }
+
+  /**
+   * worktreeパスでセッションを取得
+   */
+  getSessionByWorktree(worktreePath: string): ManagedSession | undefined {
+    const tmuxSession = tmuxManager.getSessionByWorktree(worktreePath);
+    if (!tmuxSession) return undefined;
+
+    const dbSession = db.getSessionByWorktreePath(worktreePath);
+    const worktreeId = dbSession?.worktreeId || "";
+
+    return this.toManagedSession(tmuxSession, worktreeId);
+  }
+
+  /**
+   * 全セッションを取得
+   */
+  getAllSessions(): ManagedSession[] {
+    return tmuxManager.getAllSessions().map((s) => {
+      const dbSession = db.getSessionByWorktreePath(s.worktreePath);
+      return this.toManagedSession(s, dbSession?.worktreeId || "");
+    });
+  }
+
+  /**
+   * ttydのURLを取得
+   */
+  getTtydUrl(sessionId: string): string | null {
+    const instance = ttydManager.getInstance(sessionId);
+    if (!instance) return null;
+    return `/ttyd/${sessionId}/`;
+  }
+
+  /**
+   * ttydのポートを取得
+   */
+  getTtydPort(sessionId: string): number | null {
+    const instance = ttydManager.getInstance(sessionId);
+    return instance?.port || null;
+  }
+
+  /**
+   * リソースをクリーンアップ
+   * 注意: tmuxセッションは永続化のため終了しない
+   */
+  cleanup(): void {
+    ttydManager.cleanup();
+    // tmuxManager.cleanup() は呼ばない - セッション永続化のため
+  }
+}
+
+export const sessionOrchestrator = new SessionOrchestrator();
