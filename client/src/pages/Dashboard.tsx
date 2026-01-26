@@ -384,6 +384,7 @@ export default function Dashboard() {
                   }`}
                   onClick={() => {
                     setSelectedWorktreeId(worktree.id);
+                    handleStartSession(worktree);
                     if (isMobile) setSidebarOpen(false);
                   }}
                 >
