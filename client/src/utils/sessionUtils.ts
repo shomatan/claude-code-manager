@@ -27,3 +27,18 @@ export function isSessionBelongsToRepo(
 
   return worktreeParent === repoParent && worktreeName.startsWith(`${repoName}-`);
 }
+
+/**
+ * セッションが属するリポジトリをrepoListから検索する
+ */
+export function findRepoForSession(
+  session: TtydSession,
+  repoList: string[]
+): string | null {
+  for (const repo of repoList) {
+    if (isSessionBelongsToRepo(session, repo)) {
+      return repo;
+    }
+  }
+  return null;
+}

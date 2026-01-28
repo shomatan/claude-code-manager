@@ -63,7 +63,7 @@ import { useSocket, type TtydSession } from "@/hooks/useSocket";
 import { MultiPaneLayout } from "@/components/MultiPaneLayout";
 import { SessionDashboard } from "@/components/SessionDashboard";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
-import { isSessionBelongsToRepo } from "@/utils/sessionUtils";
+import { isSessionBelongsToRepo, findRepoForSession } from "@/utils/sessionUtils";
 import type { Worktree } from "../../../shared/types";
 
 type ViewMode = "dashboard" | "panes";
@@ -182,9 +182,29 @@ export default function Dashboard() {
   };
 
   const handleSelectSession = (sessionId: string) => {
-    if (!activePanes.includes(sessionId)) {
-      setActivePanes((prev) => [...prev, sessionId]);
+    const session = sessions.get(sessionId);
+    if (!session) return;
+
+    // セッションが属するリポジトリを特定
+    const targetRepo = findRepoForSession(session, repoList);
+    if (targetRepo && targetRepo !== repoPath) {
+      // 別リポジトリの場合は切り替え
+      selectRepo(targetRepo);
     }
+
+    // activePanesPerRepoを直接更新（リポジトリ切り替え後でも正しく動作するように）
+    const targetRepoPath = targetRepo || repoPath;
+    if (targetRepoPath) {
+      setActivePanesPerRepo((prev) => {
+        const newMap = new Map(prev);
+        const currentPanes = newMap.get(targetRepoPath) || [];
+        if (!currentPanes.includes(sessionId)) {
+          newMap.set(targetRepoPath, [...currentPanes, sessionId]);
+        }
+        return newMap;
+      });
+    }
+
     setViewMode("panes");
   };
 
