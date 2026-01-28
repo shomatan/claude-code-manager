@@ -134,15 +134,13 @@ export default function Dashboard() {
     }
   }, [error]);
 
-  // リポジトリ切り替え時にビューをリセット
+  // リポジトリ切り替え時にビューを切り替え
   useEffect(() => {
     setMaximizedPane(null);
     setSelectedWorktreeId(null);
-    // activePanesがあればpanesビューを維持、なければdashboardに
+    // activePanesがあればpanesビューに切り替え、なければdashboardに
     const currentPanes = repoPath ? (activePanesPerRepo.get(repoPath) || []) : [];
-    if (currentPanes.length === 0) {
-      setViewMode("dashboard");
-    }
+    setViewMode(currentPanes.length > 0 ? "panes" : "dashboard");
   }, [repoPath, activePanesPerRepo]);
 
   // Find session for a worktree
