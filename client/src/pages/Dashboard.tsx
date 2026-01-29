@@ -3,16 +3,6 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -63,6 +53,7 @@ import { useSocket, type TtydSession } from "@/hooks/useSocket";
 import { MultiPaneLayout } from "@/components/MultiPaneLayout";
 import { SessionDashboard } from "@/components/SessionDashboard";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
+import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { isSessionBelongsToRepo, findRepoForSession } from "@/utils/sessionUtils";
 import type { Worktree } from "../../../shared/types";
 
@@ -114,8 +105,6 @@ export default function Dashboard() {
   const [selectedWorktreeId, setSelectedWorktreeId] = useState<string | null>(null);
   const [isCreateWorktreeOpen, setIsCreateWorktreeOpen] = useState(false);
   const [isSelectRepoOpen, setIsSelectRepoOpen] = useState(false);
-  const [newBranchName, setNewBranchName] = useState("");
-  const [baseBranch, setBaseBranch] = useState("");
 
   useEffect(() => {
     if (error) toast.error(error);
@@ -137,16 +126,10 @@ export default function Dashboard() {
     setIsSelectRepoOpen(false);
   };
 
-  const handleCreateWorktree = () => {
-    if (!newBranchName.trim()) {
-      toast.error("Branch name is required");
-      return;
-    }
-    createWorktree(newBranchName.trim(), baseBranch.trim() || undefined);
-    setNewBranchName("");
-    setBaseBranch("");
+  const handleCreateWorktree = (branchName: string, baseBranch?: string) => {
+    createWorktree(branchName, baseBranch);
     setIsCreateWorktreeOpen(false);
-    toast.success(`Creating worktree: ${newBranchName}`);
+    toast.success(`Creating worktree: ${branchName}`);
   };
 
   const handleDeleteWorktree = (worktree: Worktree) => {
@@ -339,62 +322,12 @@ export default function Dashboard() {
             <span className="text-base md:text-sm font-medium text-sidebar-foreground">Worktrees</span>
             <span className="text-sm md:text-xs text-muted-foreground">({worktrees.length})</span>
           </div>
-          <Dialog open={isCreateWorktreeOpen} onOpenChange={setIsCreateWorktreeOpen}>
-            <DialogTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-10 w-10 md:h-7 md:w-7"
-                disabled={!repoPath}
-              >
-                <Plus className="w-5 h-5 md:w-4 md:h-4" />
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-md mx-auto">
-              <DialogHeader>
-                <DialogTitle>Create New Worktree</DialogTitle>
-                <DialogDescription>
-                  Create a new git worktree with a new branch.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="branch">Branch Name</Label>
-                  <Input
-                    id="branch"
-                    placeholder="feature/new-feature"
-                    value={newBranchName}
-                    onChange={(e) => setNewBranchName(e.target.value)}
-                    className="font-mono h-12 md:h-10 text-base md:text-sm"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="baseBranch">Base Branch (optional)</Label>
-                  <Input
-                    id="baseBranch"
-                    placeholder="main"
-                    value={baseBranch}
-                    onChange={(e) => setBaseBranch(e.target.value)}
-                    className="font-mono h-12 md:h-10 text-base md:text-sm"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Worktree Path (auto-generated)</Label>
-                  <div className="p-3 md:p-2 rounded-md bg-muted font-mono text-sm text-muted-foreground">
-                    {repoPath}-{newBranchName.replace(/\//g, "-") || "branch-name"}
-                  </div>
-                </div>
-              </div>
-              <DialogFooter className="flex-col gap-2 sm:flex-row">
-                <Button variant="outline" onClick={() => setIsCreateWorktreeOpen(false)} className="h-12 md:h-10">
-                  Cancel
-                </Button>
-                <Button onClick={handleCreateWorktree} className="glow-green h-12 md:h-10">
-                  Create Worktree
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <CreateWorktreeDialog
+            open={isCreateWorktreeOpen}
+            onOpenChange={setIsCreateWorktreeOpen}
+            selectedRepoPath={repoPath}
+            onCreateWorktree={handleCreateWorktree}
+          />
         </div>
 
         <ScrollArea className="flex-1 px-2">
