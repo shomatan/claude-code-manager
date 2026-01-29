@@ -105,9 +105,14 @@ export class TmuxManager extends EventEmitter {
     const tmuxSessionName = `${this.SESSION_PREFIX}${id}`;
 
     try {
-      // tmuxセッションを作成（detached mode）してclaudeを起動
+      // tmuxセッションを作成（detached mode）- シェルだけを起動
       execSync(
-        `tmux new-session -d -s "${tmuxSessionName}" -c "${worktreePath}" "claude --dangerously-skip-permissions"`,
+        `tmux new-session -d -s "${tmuxSessionName}" -c "${worktreePath}"`,
+        { stdio: "pipe" }
+      );
+      // claudeコマンドを送信（終了後もシェルが残るのでvimなども使える）
+      execSync(
+        `tmux send-keys -t "${tmuxSessionName}" "claude --dangerously-skip-permissions" Enter`,
         { stdio: "pipe" }
       );
       // マウスモードを有効にしてスクロールを可能にする
