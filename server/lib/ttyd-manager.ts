@@ -78,12 +78,14 @@ export class TtydManager extends EventEmitter {
     }
 
     const port = this.findAvailablePort();
+    const basePath = `/ttyd/${sessionId}`;
 
     // ttydオプション:
     // -W: クライアント入力を許可
     // -p: ポート番号
+    // --base-path: WebSocket接続のベースパス（プロキシ経由用）
     // -t: ターミナルオプション（テーマ設定）
-    // -b: バインドアドレス（127.0.0.1でローカルのみ）
+    // -i: バインドインターフェース（lo0でローカルのみ）
     const ttydProcess = spawn(
       "ttyd",
       [
@@ -92,6 +94,8 @@ export class TtydManager extends EventEmitter {
         port.toString(),
         "-i",
         "lo0", // macOS loopback interface
+        "--base-path",
+        basePath, // プロキシ経由でのWebSocket接続に必要
         "-t",
         "fontSize=14",
         "-t",

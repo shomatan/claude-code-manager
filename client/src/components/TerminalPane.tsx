@@ -181,7 +181,7 @@ export function TerminalPane({
             src={ttydIframeSrc}
             className="w-full h-full border-0"
             title={`Terminal - ${worktree?.branch || session.id}`}
-            allow="clipboard-read; clipboard-write"
+            allow="clipboard-read; clipboard-write; keyboard-map"
           />
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground">
