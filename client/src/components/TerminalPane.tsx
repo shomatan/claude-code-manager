@@ -92,10 +92,12 @@ export function TerminalPane({
   };
 
   // Construct ttyd iframe URL
-  // ttydPortがある場合は直接接続（viteプロキシ経由だとWebSocket接続に問題がある）
-  const ttydIframeSrc = session.ttydPort
+  // ローカル開発時のみ直接接続、リモートアクセス時はプロキシ経由
+  const isLocalAccess = typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  const ttydIframeSrc = isLocalAccess && session.ttydPort
     ? `http://127.0.0.1:${session.ttydPort}/`
-    : session.ttydUrl || `/ttyd/${session.id}/`;
+    : `/ttyd/${session.id}/`;
 
   // Quick commands for mobile
   const quickCommands = [
