@@ -141,6 +141,10 @@ async function startServer() {
       const session = sessionOrchestrator.getSession(sessionId);
 
       if (session?.ttydPort) {
+        // Rewrite path to remove /ttyd/:sessionId prefix for WebSocket
+        const rewrittenPath = pathname.replace(`/ttyd/${sessionId}`, '') || '/';
+        req.url = rewrittenPath + (url.search || '');
+
         ttydProxy.ws(req, socket, head, {
           target: `ws://127.0.0.1:${session.ttydPort}`,
         });
