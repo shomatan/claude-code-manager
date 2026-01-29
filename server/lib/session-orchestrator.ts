@@ -33,12 +33,14 @@ export class SessionOrchestrator extends EventEmitter {
     });
 
     tmuxManager.on("session:stopped", (sessionId: string) => {
+      // tmuxが停止した場合はttydも停止するが、session:stoppedは発行しない
+      // 明示的にstopSession()が呼ばれた場合のみセッション削除する
       ttydManager.stopInstance(sessionId);
-      this.emit("session:stopped", sessionId);
     });
 
     ttydManager.on("instance:stopped", (sessionId: string) => {
       // ttydが停止してもtmuxセッションは維持
+      // セッション削除もしない（明示的なstopSession呼び出し時のみ削除）
     });
   }
 
