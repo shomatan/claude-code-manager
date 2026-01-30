@@ -107,7 +107,11 @@ async function startServer() {
       return;
     }
 
-    // Expressのapp.useはマウントパスを削除するので、originalUrlを使用
+    // ttydは--base-path=/ttyd/{sessionId}で起動しており、
+    // /ttyd/{sessionId}/以下のパスでリクエストを待ち受ける。
+    // Expressのapp.useはマウントパス(/ttyd/:sessionId)を削除するため、
+    // req.urlは/index.htmlのようにプレフィックスが削除された状態になる。
+    // ttydにはフルパスで転送する必要があるため、originalUrlを使用する。
     req.url = req.originalUrl;
 
     ttydProxy.web(req, res, {
@@ -140,7 +144,9 @@ async function startServer() {
       const session = sessionOrchestrator.getSession(sessionId);
 
       if (session?.ttydPort) {
-        // ttydの--base-pathと一致させるため、パスはそのまま転送
+        // ttydは--base-path=/ttyd/{sessionId}で起動しており、
+        // /ttyd/{sessionId}/wsでWebSocket接続を待ち受ける。
+        // req.urlはそのまま転送する（パスの変更不要）。
         ttydProxy.ws(req, socket, head, {
           target: `ws://127.0.0.1:${session.ttydPort}`,
         });

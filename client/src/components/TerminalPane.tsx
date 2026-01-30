@@ -96,7 +96,7 @@ export function TerminalPane({
   const isLocalAccess = typeof window !== 'undefined' &&
     (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   const ttydIframeSrc = isLocalAccess && session.ttydPort
-    ? `http://127.0.0.1:${session.ttydPort}/`
+    ? `http://127.0.0.1:${session.ttydPort}/ttyd/${session.id}/`
     : `/ttyd/${session.id}/`;
 
   // Quick commands for mobile
