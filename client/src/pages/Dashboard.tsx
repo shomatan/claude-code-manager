@@ -275,9 +275,6 @@ export default function Dashboard() {
                       <div className={`text-sm font-medium truncate ${isSelected ? "text-primary" : "text-sidebar-foreground"}`}>
                         {repoName}
                       </div>
-                      <div className="text-xs text-muted-foreground font-mono truncate">
-                        {repo}
-                      </div>
                     </div>
                     <div className="flex items-center gap-1">
                       {isSelected && (
@@ -383,7 +380,7 @@ export default function Dashboard() {
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-1">
                       {session ? (
                         <>
                           <Button
