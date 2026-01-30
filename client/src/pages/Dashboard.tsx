@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -59,6 +59,12 @@ import type { Worktree } from "../../../shared/types";
 
 type ViewMode = "dashboard" | "panes";
 
+// サイドバーの幅の定数
+const SIDEBAR_MIN_WIDTH = 200;
+const SIDEBAR_MAX_WIDTH = 400;
+const SIDEBAR_DEFAULT_WIDTH = 320;
+const SIDEBAR_WIDTH_STORAGE_KEY = "sidebar-width";
+
 export default function Dashboard() {
   const {
     isConnected,
@@ -84,6 +90,54 @@ export default function Dashboard() {
 
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // サイドバーのリサイズ機能
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (!isNaN(parsed) && parsed >= SIDEBAR_MIN_WIDTH && parsed <= SIDEBAR_MAX_WIDTH) {
+        return parsed;
+      }
+    }
+    return SIDEBAR_DEFAULT_WIDTH;
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+
+  // リサイズ開始
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  }, []);
+
+  // リサイズ中のマウス移動処理
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const newWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, e.clientX));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth.toString());
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [isResizing, sidebarWidth]);
+
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [activePanesPerRepo, setActivePanesPerRepo] = useState<Map<string, string[]>>(new Map());
   const [maximizedPane, setMaximizedPane] = useState<string | null>(null);
@@ -454,9 +508,6 @@ export default function Dashboard() {
                       )}
                     </div>
                   </div>
-                  <div className="mt-1 text-sm md:text-xs text-muted-foreground font-mono truncate pl-7 md:pl-6">
-                    {worktree.path}
-                  </div>
                 </div>
               );
             })}
@@ -516,7 +567,11 @@ export default function Dashboard() {
       )}
 
       {!isMobile && (
-        <aside className="w-80 h-screen border-r border-border flex flex-col bg-sidebar shrink-0">
+        <aside
+          ref={sidebarRef}
+          className="h-screen border-r border-border flex flex-col bg-sidebar shrink-0 relative"
+          style={{ width: `${sidebarWidth}px` }}
+        >
           <div className="p-4 border-b border-sidebar-border">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -538,6 +593,13 @@ export default function Dashboard() {
             </div>
           </div>
           <SidebarContent />
+          {/* リサイズハンドル */}
+          <div
+            className={`absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/50 transition-colors ${
+              isResizing ? "bg-primary/50" : "bg-transparent"
+            }`}
+            onMouseDown={handleResizeStart}
+          />
         </aside>
       )}
 
