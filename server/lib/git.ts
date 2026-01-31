@@ -93,10 +93,59 @@ const SKIP_DIRECTORIES = new Set([
 ]);
 
 /**
+ * fd/findコマンドを使ってGitリポジトリを効率的に探索
+ *
+ * fdコマンド（高速）を優先的に使用し、失敗した場合はfindにフォールバックします。
+ *
+ * @param basePath - 探索を開始するベースパス（バリデーション済み）
+ * @returns 発見されたリポジトリ情報の配列
+ * @throws fd/findコマンドが両方失敗した場合
+ */
+async function scanWithFind(basePath: string): Promise<RepoInfo[]> {
+  let stdout: string;
+
+  // まずfdを試す（高速）
+  try {
+    const result = await execAsync(
+      `fd -t d -H --no-ignore -E node_modules -E .cache -E vendor -E __pycache__ -E .venv -E target -E dist -E build "^\\.git$" "${basePath}" 2>/dev/null`,
+      { maxBuffer: 10 * 1024 * 1024 }
+    );
+    stdout = result.stdout;
+  } catch {
+    // fdが失敗したらfindにフォールバック
+    const result = await execAsync(
+      `find "${basePath}" -type d -name ".git" 2>/dev/null`,
+      { maxBuffer: 10 * 1024 * 1024 } // 大きなディレクトリツリーに対応
+    );
+    stdout = result.stdout;
+  }
+
+  const gitDirs = stdout.trim().split("\n").filter(Boolean);
+
+  if (gitDirs.length === 0) {
+    return [];
+  }
+
+  // .gitディレクトリの親ディレクトリがリポジトリパス
+  // ブランチ取得は省略して即座に返す（UIで後から取得可能）
+  return gitDirs.map((gitDir) => {
+    const repoPath = path.dirname(gitDir);
+    return {
+      path: repoPath,
+      name: path.basename(repoPath),
+      branch: "",
+    };
+  });
+}
+
+/**
  * 指定したパス配下のGitリポジトリを再帰的に探索
  *
+ * findコマンドを使用して効率的に探索し、失敗した場合は
+ * 再帰探索にフォールバックします。
+ *
  * @param basePath - 探索を開始するベースパス
- * @param maxDepth - 最大探索階層数（デフォルト: 3）
+ * @param maxDepth - 最大探索階層数（デフォルト: 3、フォールバック時のみ使用）
  * @returns 発見されたリポジトリ情報の配列
  *
  * @example
@@ -110,6 +159,33 @@ export async function scanRepositories(
   maxDepth: number = 3
 ): Promise<RepoInfo[]> {
   const safePath = validatePath(basePath);
+
+  // ベースパスが存在するか確認
+  try {
+    const stats = await fs.promises.stat(safePath);
+    if (!stats.isDirectory()) {
+      throw new Error("指定されたパスはディレクトリではありません");
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("指定されたパスが存在しません");
+    }
+    throw error;
+  }
+
+  // findコマンドを使った探索を試行
+  try {
+    const repos = await scanWithFind(safePath);
+    // パスでソートして返す
+    return repos.sort((a, b) => a.path.localeCompare(b.path));
+  } catch {
+    // findコマンドが失敗した場合は再帰探索にフォールバック
+    console.warn(
+      "findコマンドによる探索に失敗しました。再帰探索にフォールバックします。"
+    );
+  }
+
+  // フォールバック: 既存の再帰探索ロジック
   const repos: RepoInfo[] = [];
 
   /**
@@ -167,19 +243,6 @@ export async function scanRepositories(
         )
       );
     }
-  }
-
-  // ベースパスが存在するか確認
-  try {
-    const stats = await fs.promises.stat(safePath);
-    if (!stats.isDirectory()) {
-      throw new Error("指定されたパスはディレクトリではありません");
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error("指定されたパスが存在しません");
-    }
-    throw error;
   }
 
   await scan(safePath, 1);

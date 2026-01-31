@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,9 +11,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
-import { FolderOpen, RefreshCw } from "lucide-react";
+import { FolderOpen, RefreshCw, Search } from "lucide-react";
 import type { RepoInfo } from "../../../shared/types";
 
 interface RepoSelectDialogProps {
@@ -37,6 +36,20 @@ export function RepoSelectDialog({
     return localStorage.getItem("scanBasePath") || "";
   });
   const [repoInput, setRepoInput] = useState("");
+  const [filterQuery, setFilterQuery] = useState("");
+
+  // フィルタリング結果をメモ化
+  const filteredRepos = useMemo(() => {
+    if (!filterQuery.trim()) {
+      return scannedRepos;
+    }
+    const query = filterQuery.toLowerCase();
+    return scannedRepos.filter(
+      (repo) =>
+        repo.name.toLowerCase().includes(query) ||
+        repo.path.toLowerCase().includes(query)
+    );
+  }, [scannedRepos, filterQuery]);
 
   // スキャンパスをlocalStorageに保存
   useEffect(() => {
@@ -62,11 +75,6 @@ export function RepoSelectDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange} modal={false}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-8 w-8">
-          <FolderOpen className="w-4 h-4" />
-        </Button>
-      </DialogTrigger>
       <DialogContent className="bg-card border-border w-[calc(100%-2rem)] max-w-lg mx-auto max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>リポジトリを選択</DialogTitle>
@@ -107,13 +115,25 @@ export function RepoSelectDialog({
             </div>
           </div>
 
-          {/* スキャン結果リスト */}
-          {scannedRepos.length > 0 && (
-            <div className="space-y-2 flex-1 overflow-hidden flex flex-col">
-              <Label>検出されたリポジトリ ({scannedRepos.length})</Label>
-              <div className="flex-1 border rounded-md overflow-y-auto max-h-[300px]">
+          {/* スキャン結果リスト - 常に表示して高さを固定 */}
+          <div className="space-y-2 flex-1 overflow-hidden flex flex-col">
+            <Label>
+              {isScanning ? "スキャン中..." : scannedRepos.length > 0 ? `検出されたリポジトリ (${filteredRepos.length}/${scannedRepos.length})` : "検出されたリポジトリ"}
+            </Label>
+            {/* 検索ボックス */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="リポジトリを検索..."
+                value={filterQuery}
+                onChange={(e) => setFilterQuery(e.target.value)}
+                className="pl-9 h-10"
+                disabled={isScanning || scannedRepos.length === 0}
+              />
+            </div>
+            <div className={`flex-1 border rounded-md overflow-y-auto min-h-[300px] max-h-[300px] ${isScanning ? "opacity-50" : ""}`}>
                 <div className="p-2 space-y-1">
-                  {scannedRepos.map((repo) => (
+                  {filteredRepos.map((repo) => (
                     <div
                       key={repo.path}
                       className="p-3 rounded-md hover:bg-accent cursor-pointer transition-colors"
@@ -125,7 +145,7 @@ export function RepoSelectDialog({
                       <div className="flex items-center gap-2">
                         <FolderOpen className="w-4 h-4 text-muted-foreground shrink-0" />
                         <span className="font-medium text-sm truncate">{repo.name}</span>
-                        <span className="text-xs text-muted-foreground">({repo.branch})</span>
+                        {repo.branch && <span className="text-xs text-muted-foreground">({repo.branch})</span>}
                       </div>
                       <div className="text-xs text-muted-foreground font-mono mt-1 truncate pl-6">
                         {repo.path}
@@ -135,7 +155,6 @@ export function RepoSelectDialog({
                 </div>
               </div>
             </div>
-          )}
 
           <Separator />
 

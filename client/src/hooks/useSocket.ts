@@ -187,7 +187,7 @@ export function useSocket(): UseSocketReturn {
     socket.on("repos:scanning", ({ status, error: scanError }) => {
       if (status === "start") {
         setIsScanning(true);
-        setScannedRepos([]);
+        // スキャン中も前回のリストを保持（UIの伸縮を防ぐ）
       } else if (status === "complete") {
         setIsScanning(false);
       } else if (status === "error") {

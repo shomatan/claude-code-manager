@@ -337,14 +337,14 @@ export default function Dashboard() {
               </SelectContent>
             </Select>
           ) : (
-            <RepoSelectDialog
-              isOpen={isSelectRepoOpen}
-              onOpenChange={setIsSelectRepoOpen}
-              scannedRepos={scannedRepos}
-              isScanning={isScanning}
-              onScanRepos={scanRepos}
-              onSelectRepo={handleSelectRepo}
-            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setIsSelectRepoOpen(true)}
+            >
+              <FolderOpen className="w-4 h-4" />
+            </Button>
           )}
         </div>
 
@@ -870,6 +870,16 @@ export default function Dashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* リポジトリ選択ダイアログ - SidebarContentの外に配置して再マウントを防ぐ */}
+      <RepoSelectDialog
+        isOpen={isSelectRepoOpen}
+        onOpenChange={setIsSelectRepoOpen}
+        scannedRepos={scannedRepos}
+        isScanning={isScanning}
+        onScanRepos={scanRepos}
+        onSelectRepo={handleSelectRepo}
+      />
     </div>
   );
 }
