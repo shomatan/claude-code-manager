@@ -30,6 +30,21 @@ export interface Session {
   createdAt: Date;
 }
 
+/**
+ * ttyd/tmux統合されたセッション情報
+ *
+ * Session を拡張し、tmuxセッション名とttyd接続情報を含む。
+ * サーバー側のSessionOrchestratorとクライアント側の両方で共通して使用する。
+ */
+export interface ManagedSession extends Session {
+  /** tmuxセッション名 */
+  tmuxSessionName: string;
+  /** ttydのポート番号（未起動時はnull） */
+  ttydPort: number | null;
+  /** ttydのURL（未起動時はnull） */
+  ttydUrl: string | null;
+}
+
 export type SessionStatus = "active" | "idle" | "error" | "stopped";
 
 export interface Message {
@@ -54,6 +69,9 @@ export interface ClaudeStreamEvent {
   error?: string;
 }
 
+/** 特殊キー入力の種別 */
+export type SpecialKey = "Enter" | "C-c" | "C-d" | "y" | "n" | "S-Tab" | "Escape";
+
 // WebSocket event types
 export interface ServerToClientEvents {
   // Repository events
@@ -67,12 +85,12 @@ export interface ServerToClientEvents {
   "worktree:deleted": (worktreeId: string) => void;
   "worktree:error": (error: string) => void;
 
-  // Session events
-  "session:created": (session: Session) => void;
-  "session:updated": (session: Session) => void;
+  // Session events（ManagedSessionを使用）
+  "session:created": (session: ManagedSession) => void;
+  "session:updated": (session: ManagedSession) => void;
   "session:stopped": (sessionId: string) => void;
   "session:error": (data: { sessionId: string; error: string }) => void;
-  "session:restored": (data: { session: Session; messages: Message[] }) => void;
+  "session:restored": (session: ManagedSession) => void;
   "session:restore_failed": (data: { worktreePath: string; error: string }) => void;
 
   // Message events
@@ -108,6 +126,7 @@ export interface ClientToServerEvents {
   "session:start": (data: { worktreeId: string; worktreePath: string }) => void;
   "session:stop": (sessionId: string) => void;
   "session:send": (data: { sessionId: string; message: string }) => void;
+  "session:key": (data: { sessionId: string; key: SpecialKey }) => void;
   "session:restore": (worktreePath: string) => void;
 
   // Repository commands

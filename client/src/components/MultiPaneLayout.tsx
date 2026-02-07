@@ -15,18 +15,18 @@ import {
   Square,
   Grid2x2,
 } from "lucide-react";
-import { TerminalPane, type TtydSession } from "./TerminalPane";
+import { TerminalPane } from "./TerminalPane";
 import { useIsMobile } from "@/hooks/useMobile";
-import type { Worktree } from "../../../shared/types";
+import type { ManagedSession, SpecialKey, Worktree } from "../../../shared/types";
 
 type LayoutMode = "single" | "split-2" | "grid-4";
 
 interface MultiPaneLayoutProps {
   activePanes: string[]; // Session IDs
-  sessions: Map<string, TtydSession>;
+  sessions: Map<string, ManagedSession>;
   worktrees: Worktree[];
   onSendMessage: (sessionId: string, message: string) => void;
-  onSendKey: (sessionId: string, key: "Enter" | "C-c" | "C-d" | "y" | "n" | "S-Tab" | "Escape") => void;
+  onSendKey: (sessionId: string, key: SpecialKey) => void;
   onStopSession: (sessionId: string) => void;
   onClosePane: (sessionId: string) => void;
   onMaximizePane: (sessionId: string) => void;
@@ -58,7 +58,7 @@ export function MultiPaneLayout({
   // Force single pane on mobile
   const effectiveLayoutMode = isMobile ? "single" : layoutMode;
 
-  const getWorktreeForSession = (session: TtydSession): Worktree | undefined => {
+  const getWorktreeForSession = (session: ManagedSession): Worktree | undefined => {
     return worktrees.find((w) => w.id === session.worktreeId);
   };
 

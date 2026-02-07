@@ -1,19 +1,11 @@
-import type { TtydSession } from "../hooks/useSocket";
-
-function getParentPath(path: string): string {
-  const lastSlash = path.lastIndexOf("/");
-  return lastSlash >= 0 ? path.substring(0, lastSlash) : "";
-}
-
-function getBaseName(path: string): string {
-  return path.substring(path.lastIndexOf("/") + 1);
-}
+import type { ManagedSession } from "../../../shared/types";
+import { getParentPath, getBaseName } from "./pathUtils";
 
 /**
  * セッションが指定されたリポジトリに属するかどうかを判定する
  */
 export function isSessionBelongsToRepo(
-  session: TtydSession,
+  session: ManagedSession,
   repoPath: string
 ): boolean {
   const { worktreePath } = session;
@@ -32,7 +24,7 @@ export function isSessionBelongsToRepo(
  * セッションが属するリポジトリをrepoListから検索する
  */
 export function findRepoForSession(
-  session: TtydSession,
+  session: ManagedSession,
   repoList: string[]
 ): string | null {
   for (const repo of repoList) {

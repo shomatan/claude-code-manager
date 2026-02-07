@@ -12,32 +12,13 @@ import type {
   ServerToClientEvents,
   ClientToServerEvents,
   Worktree,
-  Session,
+  ManagedSession,
   Message,
   RepoInfo,
+  SpecialKey,
 } from "../../../shared/types";
 
-// Extended session type with ttyd fields
-export interface TtydSession extends Session {
-  ttydUrl?: string | null;
-  ttydPort?: number | null;
-  tmuxSessionName?: string;
-}
-
-// Extended event types
-interface ExtendedServerToClientEvents extends Omit<ServerToClientEvents, "session:created" | "session:restored"> {
-  "session:created": (session: TtydSession) => void;
-  "session:restored": (session: TtydSession) => void;
-  "image:uploaded": (data: { path: string; filename: string }) => void;
-  "image:error": (data: { message: string }) => void;
-}
-
-interface ExtendedClientToServerEvents extends ClientToServerEvents {
-  "session:key": (data: { sessionId: string; key: "Enter" | "C-c" | "C-d" | "y" | "n" | "S-Tab" | "Escape" }) => void;
-  "image:upload": (data: { sessionId: string; base64Data: string; mimeType: string }) => void;
-}
-
-type TypedSocket = Socket<ExtendedServerToClientEvents, ExtendedClientToServerEvents>;
+type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 // Extract token from URL
 function getTokenFromUrl(): string | null {
@@ -70,11 +51,11 @@ interface UseSocketReturn {
   refreshWorktrees: () => void;
 
   // Sessions
-  sessions: Map<string, TtydSession>;
+  sessions: Map<string, ManagedSession>;
   startSession: (worktreeId: string, worktreePath: string) => void;
   stopSession: (sessionId: string) => void;
   sendMessage: (sessionId: string, message: string) => void;
-  sendKey: (sessionId: string, key: "Enter" | "C-c" | "C-d" | "y" | "n" | "S-Tab" | "Escape") => void;
+  sendKey: (sessionId: string, key: SpecialKey) => void;
   restoreSession: (worktreePath: string) => void;
 
   // Tunnel
@@ -112,7 +93,7 @@ export function useSocket(): UseSocketReturn {
     return localStorage.getItem("selectedRepoPath");
   });
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
-  const [sessions, setSessions] = useState<Map<string, TtydSession>>(new Map());
+  const [sessions, setSessions] = useState<Map<string, ManagedSession>>(new Map());
 
   // Tunnel state
   const [tunnelActive, setTunnelActive] = useState(false);
@@ -227,7 +208,7 @@ export function useSocket(): UseSocketReturn {
     });
 
     // Session events (ttyd-based)
-    const updateSession = (session: TtydSession): void => {
+    const updateSession = (session: ManagedSession): void => {
       setSessions((prev) => new Map(prev).set(session.id, session));
     };
 
@@ -386,7 +367,7 @@ export function useSocket(): UseSocketReturn {
   }, []);
 
   const sendKey = useCallback(
-    (sessionId: string, key: "Enter" | "C-c" | "C-d" | "y" | "n" | "S-Tab" | "Escape") => {
+    (sessionId: string, key: SpecialKey) => {
       socketRef.current?.emit("session:key", { sessionId, key });
     },
     []

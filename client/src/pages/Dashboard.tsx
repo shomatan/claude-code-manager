@@ -62,13 +62,14 @@ import {
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMobile";
 import { toast } from "sonner";
-import { useSocket, type TtydSession } from "@/hooks/useSocket";
+import { useSocket } from "@/hooks/useSocket";
 import { MultiPaneLayout } from "@/components/MultiPaneLayout";
 import { SessionDashboard } from "@/components/SessionDashboard";
 import { RepoSelectDialog } from "@/components/RepoSelectDialog";
 import { CreateWorktreeDialog } from "@/components/CreateWorktreeDialog";
 import { isSessionBelongsToRepo, findRepoForSession } from "@/utils/sessionUtils";
-import type { Worktree } from "../../../shared/types";
+import { getBaseName } from "@/utils/pathUtils";
+import type { Worktree, ManagedSession } from "../../../shared/types";
 
 type ViewMode = "dashboard" | "panes";
 
@@ -215,7 +216,7 @@ export default function Dashboard() {
     setViewMode(currentPanes.length > 0 ? "panes" : "dashboard");
   }, [repoPath, activePanesPerRepo]);
 
-  const getSessionForWorktree = (worktreeId: string): TtydSession | undefined => {
+  const getSessionForWorktree = (worktreeId: string): ManagedSession | undefined => {
     return Array.from(sessions.values()).find((s) => s.worktreeId === worktreeId);
   };
 
@@ -335,7 +336,7 @@ export default function Dashboard() {
               <SelectContent>
                 {allowedRepos.map((repo) => (
                   <SelectItem key={repo} value={repo} className="font-mono text-xs">
-                    {repo.split("/").pop()}
+                    {getBaseName(repo)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -357,7 +358,7 @@ export default function Dashboard() {
             <div className="space-y-1">
               {repoList.map((repo) => {
                 const isSelected = repo === repoPath;
-                const repoName = repo.split("/").pop() || repo;
+                const repoName = getBaseName(repo);
                 return (
                   <div
                     key={repo}

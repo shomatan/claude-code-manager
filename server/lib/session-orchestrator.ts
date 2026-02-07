@@ -9,13 +9,9 @@ import { EventEmitter } from "node:events";
 import { tmuxManager, type TmuxSession } from "./tmux-manager.js";
 import { ttydManager, type TtydInstance } from "./ttyd-manager.js";
 import { db } from "./database.js";
-import type { Session, SessionStatus } from "../../shared/types.js";
+import type { ManagedSession, SessionStatus, SpecialKey } from "../../shared/types.js";
 
-export interface ManagedSession extends Session {
-  tmuxSessionName: string;
-  ttydPort: number | null;
-  ttydUrl: string | null;
-}
+export type { ManagedSession };
 
 export class SessionOrchestrator extends EventEmitter {
   constructor() {
@@ -186,7 +182,7 @@ export class SessionOrchestrator extends EventEmitter {
   /**
    * 特殊キーを送信
    */
-  sendSpecialKey(sessionId: string, key: "Enter" | "C-c" | "C-d" | "y" | "n" | "S-Tab" | "Escape"): void {
+  sendSpecialKey(sessionId: string, key: SpecialKey): void {
     tmuxManager.sendSpecialKey(sessionId, key);
   }
 

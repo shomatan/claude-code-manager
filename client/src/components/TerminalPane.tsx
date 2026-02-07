@@ -28,20 +28,13 @@ import {
   XCircle,
   ImageIcon,
 } from "lucide-react";
-import type { Session, Worktree } from "../../../shared/types";
-
-// Extended Session type with ttyd fields
-export interface TtydSession extends Session {
-  ttydUrl?: string | null;
-  ttydPort?: number | null;
-  tmuxSessionName?: string;
-}
+import type { ManagedSession, SpecialKey, Worktree } from "../../../shared/types";
 
 interface TerminalPaneProps {
-  session: TtydSession;
+  session: ManagedSession;
   worktree: Worktree | undefined;
   onSendMessage: (message: string) => void;
-  onSendKey: (key: "Enter" | "C-c" | "C-d" | "y" | "n" | "S-Tab" | "Escape") => void;
+  onSendKey: (key: SpecialKey) => void;
   onStopSession: () => void;
   onClose: () => void;
   onMaximize?: () => void;

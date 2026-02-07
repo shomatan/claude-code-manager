@@ -20,10 +20,11 @@ import {
   ExternalLink,
   FolderOpen,
 } from "lucide-react";
-import type { TtydSession } from "./TerminalPane";
+import type { ManagedSession } from "../../../shared/types";
+import { getBaseName } from "@/utils/pathUtils";
 
 interface SessionDashboardProps {
-  sessions: Map<string, TtydSession>;
+  sessions: Map<string, ManagedSession>;
   onSelectSession: (sessionId: string) => void;
   onStopSession: (sessionId: string) => void;
 }
@@ -31,8 +32,8 @@ interface SessionDashboardProps {
 /**
  * セッションをリポジトリごとにグループ化
  */
-function groupSessionsByRepo(sessions: TtydSession[]): Map<string, TtydSession[]> {
-  const grouped = new Map<string, TtydSession[]>();
+function groupSessionsByRepo(sessions: ManagedSession[]): Map<string, ManagedSession[]> {
+  const grouped = new Map<string, ManagedSession[]>();
 
   for (const session of sessions) {
     // worktreePathの親ディレクトリをリポジトリのベースパスとして使用
@@ -58,13 +59,6 @@ function groupSessionsByRepo(sessions: TtydSession[]): Map<string, TtydSession[]
   return grouped;
 }
 
-/**
- * worktreePathから表示用の名前を取得（ディレクトリ名）
- */
-function getDisplayName(worktreePath: string): string {
-  return worktreePath.split("/").pop() || worktreePath;
-}
-
 export function SessionDashboard({
   sessions,
   onSelectSession,
@@ -72,7 +66,7 @@ export function SessionDashboard({
 }: SessionDashboardProps) {
   const sessionsArray = Array.from(sessions.values());
 
-  const getStatusColor = (status: TtydSession["status"]) => {
+  const getStatusColor = (status: ManagedSession["status"]) => {
     switch (status) {
       case "active":
         return "text-primary";
@@ -85,7 +79,7 @@ export function SessionDashboard({
     }
   };
 
-  const getStatusIcon = (status: TtydSession["status"]) => {
+  const getStatusIcon = (status: ManagedSession["status"]) => {
     switch (status) {
       case "active":
         return <Zap className="w-4 h-4 animate-pulse" />;
@@ -132,7 +126,7 @@ export function SessionDashboard({
       <div className="space-y-6">
         {Array.from(groupedSessions.entries()).map(([repoPath, repoSessions]) => {
           // リポジトリのベースパスから表示名を取得
-          const repoDisplayName = repoPath.split("/").pop() || repoPath;
+          const repoDisplayName = getBaseName(repoPath);
 
           return (
             <div key={repoPath} className="space-y-3">
@@ -146,7 +140,7 @@ export function SessionDashboard({
               {/* セッションカードグリッド */}
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {repoSessions.map((session) => {
-                  const displayName = getDisplayName(session.worktreePath);
+                  const displayName = getBaseName(session.worktreePath);
 
                   return (
                     <div

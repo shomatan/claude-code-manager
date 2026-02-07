@@ -19,27 +19,18 @@ import {
   isGitRepository,
   scanRepositories,
 } from "./lib/git.js";
-import { sessionOrchestrator, type ManagedSession } from "./lib/session-orchestrator.js";
+import { sessionOrchestrator } from "./lib/session-orchestrator.js";
 import { TunnelManager } from "./lib/tunnel.js";
 import { authManager } from "./lib/auth.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
 import { getListeningPorts } from "./lib/port-scanner.js";
 import { imageManager, ImageManagerError } from "./lib/image-manager.js";
+import { getErrorMessage } from "./lib/errors.js";
 import type {
   ServerToClientEvents,
   ClientToServerEvents,
-  Session,
+  ManagedSession,
 } from "../shared/types.js";
-
-// Extend types for ttyd integration
-interface ExtendedServerToClientEvents extends Omit<ServerToClientEvents, "session:created" | "session:restored"> {
-  "session:created": (session: ManagedSession) => void;
-  "session:restored": (session: ManagedSession) => void;
-}
-
-interface ExtendedClientToServerEvents extends ClientToServerEvents {
-  "session:key": (data: { sessionId: string; key: "Enter" | "C-c" | "C-d" | "y" | "n" | "S-Tab" | "Escape" }) => void;
-}
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -97,7 +88,7 @@ async function startServer() {
   app.use(authManager.httpMiddleware());
 
   // Initialize Socket.IO
-  const io = new Server<ExtendedClientToServerEvents, ExtendedServerToClientEvents>(server, {
+  const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
     cors: {
       origin: "*",
       methods: ["GET", "POST"],
@@ -193,7 +184,7 @@ async function startServer() {
         socket.emit("repos:scanning", {
           basePath,
           status: "error",
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
@@ -215,7 +206,7 @@ async function startServer() {
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", worktrees);
       } catch (error) {
-        socket.emit("repo:error", error instanceof Error ? error.message : "Unknown error");
+        socket.emit("repo:error", getErrorMessage(error));
       }
     });
 
@@ -226,7 +217,7 @@ async function startServer() {
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", worktrees);
       } catch (error) {
-        socket.emit("worktree:error", error instanceof Error ? error.message : "Unknown error");
+        socket.emit("worktree:error", getErrorMessage(error));
       }
     });
 
@@ -238,7 +229,7 @@ async function startServer() {
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", worktrees);
       } catch (error) {
-        socket.emit("worktree:error", error instanceof Error ? error.message : "Unknown error");
+        socket.emit("worktree:error", getErrorMessage(error));
       }
     });
 
@@ -255,7 +246,7 @@ async function startServer() {
         const worktrees = await listWorktrees(repoPath);
         socket.emit("worktree:list", worktrees);
       } catch (error) {
-        socket.emit("worktree:error", error instanceof Error ? error.message : "Unknown error");
+        socket.emit("worktree:error", getErrorMessage(error));
       }
     });
 
@@ -268,7 +259,7 @@ async function startServer() {
       } catch (error) {
         socket.emit("session:error", {
           sessionId: "",
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
@@ -288,7 +279,7 @@ async function startServer() {
       } catch (error) {
         socket.emit("session:restore_failed", {
           worktreePath,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
@@ -303,7 +294,7 @@ async function startServer() {
       } catch (error) {
         socket.emit("session:error", {
           sessionId,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
@@ -315,29 +306,24 @@ async function startServer() {
       } catch (error) {
         socket.emit("session:error", {
           sessionId,
-          error: error instanceof Error ? error.message : "Unknown error",
+          error: getErrorMessage(error),
         });
       }
     });
 
     // ===== Session Orchestrator Event Handlers =====
+    // sessionOrchestrator のイベントをそのまま Socket.IO クライアントへ転送する
+    const forwardedEvents = ["session:created", "session:restored", "session:stopped"] as const;
+    type ForwardedEvent = (typeof forwardedEvents)[number];
 
-    const onSessionCreated = (session: ManagedSession) => {
-      socket.emit("session:created", session);
-    };
-
-    const onSessionRestored = (session: ManagedSession) => {
-      socket.emit("session:restored", session);
-    };
-
-    const onSessionStopped = (sessionId: string) => {
-      socket.emit("session:stopped", sessionId);
-    };
-
-    // Register event listeners
-    sessionOrchestrator.on("session:created", onSessionCreated);
-    sessionOrchestrator.on("session:restored", onSessionRestored);
-    sessionOrchestrator.on("session:stopped", onSessionStopped);
+    const forwardHandlers = new Map<ForwardedEvent, (...args: unknown[]) => void>();
+    for (const event of forwardedEvents) {
+      const handler = (...args: unknown[]) => {
+        (socket.emit as (event: string, ...args: unknown[]) => void)(event, ...args);
+      };
+      forwardHandlers.set(event, handler);
+      sessionOrchestrator.on(event, handler);
+    }
 
     // ===== Port Scan Commands =====
 
@@ -392,7 +378,7 @@ async function startServer() {
           io.emit("tunnel:stopped");
         });
       } catch (error) {
-        socket.emit("tunnel:error", { message: error instanceof Error ? error.message : "Unknown error" });
+        socket.emit("tunnel:error", { message: getErrorMessage(error) });
       }
     });
 
@@ -432,9 +418,9 @@ async function startServer() {
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`);
 
-      sessionOrchestrator.off("session:created", onSessionCreated);
-      sessionOrchestrator.off("session:restored", onSessionRestored);
-      sessionOrchestrator.off("session:stopped", onSessionStopped);
+      forwardHandlers.forEach((handler, event) => {
+        sessionOrchestrator.off(event, handler);
+      });
     });
   });
 
@@ -473,7 +459,7 @@ async function startServer() {
       } catch (error) {
         console.error(
           "Failed to start tunnel:",
-          error instanceof Error ? error.message : error
+          getErrorMessage(error)
         );
         console.log("Continuing without remote access...");
       }
@@ -512,7 +498,7 @@ async function startServer() {
       } catch (error) {
         console.error(
           "Failed to start tunnel:",
-          error instanceof Error ? error.message : error
+          getErrorMessage(error)
         );
         console.log("Continuing without remote access...");
       }

@@ -8,6 +8,7 @@
 import { execSync, exec } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { nanoid } from "nanoid";
+import type { SpecialKey } from "../../shared/types.js";
 
 export interface TmuxSession {
   id: string;
@@ -170,7 +171,7 @@ export class TmuxManager extends EventEmitter {
   /**
    * 特殊キーを送信 (Enter, Ctrl+C, Ctrl+D など)
    */
-  sendSpecialKey(sessionId: string, key: "Enter" | "C-c" | "C-d" | "y" | "n" | "S-Tab" | "Escape"): void {
+  sendSpecialKey(sessionId: string, key: SpecialKey): void {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error("Session not found");
 
