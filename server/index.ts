@@ -20,6 +20,7 @@ import {
   scanRepositories,
 } from "./lib/git.js";
 import { sessionOrchestrator } from "./lib/session-orchestrator.js";
+import { tmuxManager } from "./lib/tmux-manager.js";
 import { TunnelManager } from "./lib/tunnel.js";
 import { authManager } from "./lib/auth.js";
 import { printRemoteAccessInfo } from "./lib/qrcode.js";
@@ -308,6 +309,20 @@ async function startServer() {
           sessionId,
           error: getErrorMessage(error),
         });
+      }
+    });
+
+    // コピー: tmuxバッファの内容をクライアントに返す（コールバックパターン）
+    socket.on("session:copy", (sessionId, callback) => {
+      try {
+        const text = tmuxManager.getBuffer(sessionId);
+        if (text) {
+          callback({ text });
+        } else {
+          callback({ error: "バッファが空です" });
+        }
+      } catch (error) {
+        callback({ error: String(error) });
       }
     });
 

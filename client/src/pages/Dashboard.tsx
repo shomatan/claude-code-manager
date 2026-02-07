@@ -112,6 +112,7 @@ export default function Dashboard() {
     imageUploadResult,
     imageUploadError,
     clearImageUploadState,
+    copyBuffer,
   } = useSocket();
 
   const isMobile = useIsMobile();
@@ -718,6 +719,7 @@ export default function Dashboard() {
               imageUploadResult={imageUploadResult}
               imageUploadError={imageUploadError}
               onClearImageUploadState={clearImageUploadState}
+              onCopyBuffer={copyBuffer}
             />
           ) : (
               <div className="h-full flex items-center justify-center p-6">

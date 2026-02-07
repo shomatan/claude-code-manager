@@ -127,6 +127,7 @@ export interface ClientToServerEvents {
   "session:stop": (sessionId: string) => void;
   "session:send": (data: { sessionId: string; message: string }) => void;
   "session:key": (data: { sessionId: string; key: SpecialKey }) => void;
+  "session:copy": (sessionId: string, callback: (response: { text?: string; error?: string }) => void) => void;
   "session:restore": (worktreePath: string) => void;
 
   // Repository commands

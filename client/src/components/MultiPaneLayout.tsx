@@ -35,6 +35,7 @@ interface MultiPaneLayoutProps {
   imageUploadResult?: { path: string; filename: string } | null;
   imageUploadError?: string | null;
   onClearImageUploadState?: () => void;
+  onCopyBuffer?: (sessionId: string) => Promise<string | null>;
 }
 
 export function MultiPaneLayout({
@@ -51,6 +52,7 @@ export function MultiPaneLayout({
   imageUploadResult,
   imageUploadError,
   onClearImageUploadState,
+  onCopyBuffer,
 }: MultiPaneLayoutProps) {
   const isMobile = useIsMobile();
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("grid-4");
@@ -82,6 +84,7 @@ export function MultiPaneLayout({
             imageUploadResult={imageUploadResult}
             imageUploadError={imageUploadError}
             onClearImageUploadState={onClearImageUploadState}
+            onCopyBuffer={onCopyBuffer ? () => onCopyBuffer(maximizedPane) : undefined}
           />
         </div>
       );
@@ -189,6 +192,7 @@ export function MultiPaneLayout({
               imageUploadResult={imageUploadResult}
               imageUploadError={imageUploadError}
               onClearImageUploadState={onClearImageUploadState}
+              onCopyBuffer={onCopyBuffer ? () => onCopyBuffer(sessionId) : undefined}
             />
           );
         })}

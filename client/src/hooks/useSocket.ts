@@ -75,6 +75,9 @@ interface UseSocketReturn {
   imageUploadResult: { path: string; filename: string } | null;
   imageUploadError: string | null;
   clearImageUploadState: () => void;
+
+  // Copy buffer
+  copyBuffer: (sessionId: string) => Promise<string | null>;
 }
 
 export function useSocket(): UseSocketReturn {
@@ -408,6 +411,27 @@ export function useSocket(): UseSocketReturn {
     setImageUploadError(null);
   }, []);
 
+  // Copy buffer action
+  const copyBuffer = useCallback(
+    (sessionId: string): Promise<string | null> => {
+      return new Promise((resolve) => {
+        if (!socketRef.current) {
+          resolve(null);
+          return;
+        }
+        socketRef.current.emit("session:copy", sessionId, (response: { text?: string; error?: string }) => {
+          if (response.text) {
+            resolve(response.text);
+          } else {
+            console.error("[Socket] Copy buffer error:", response.error);
+            resolve(null);
+          }
+        });
+      });
+    },
+    []
+  );
+
   return {
     isConnected,
     error,
@@ -443,5 +467,7 @@ export function useSocket(): UseSocketReturn {
     imageUploadResult,
     imageUploadError,
     clearImageUploadState,
+    // Copy buffer
+    copyBuffer,
   };
 }

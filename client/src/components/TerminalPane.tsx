@@ -27,6 +27,8 @@ import {
   RefreshCw,
   XCircle,
   ImageIcon,
+  Copy,
+  Check,
 } from "lucide-react";
 import type { ManagedSession, SpecialKey, Worktree } from "../../../shared/types";
 
@@ -43,6 +45,7 @@ interface TerminalPaneProps {
   imageUploadResult?: { path: string; filename: string } | null;
   imageUploadError?: string | null;
   onClearImageUploadState?: () => void;
+  onCopyBuffer?: () => Promise<string | null>;
 }
 
 export function TerminalPane({
@@ -58,6 +61,7 @@ export function TerminalPane({
   imageUploadResult,
   imageUploadError,
   onClearImageUploadState,
+  onCopyBuffer,
 }: TerminalPaneProps) {
   const [inputValue, setInputValue] = useState("");
   const [showInput, setShowInput] = useState(true);
@@ -67,6 +71,22 @@ export function TerminalPane({
   const [iframeKey, setIframeKey] = useState(0);
   const [pastedImage, setPastedImage] = useState<{ base64: string; mimeType: string; preview: string } | null>(null);
   const [imageMessage, setImageMessage] = useState("");
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  // tmuxバッファの内容をクリップボードにコピー
+  const handleCopyBuffer = async () => {
+    if (!onCopyBuffer) return;
+    try {
+      const text = await onCopyBuffer();
+      if (text) {
+        await navigator.clipboard.writeText(text);
+        setCopySuccess(true);
+        setTimeout(() => setCopySuccess(false), 2000);
+      }
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
 
   // Focus textarea when input bar is shown
   useEffect(() => {
@@ -209,6 +229,19 @@ export function TerminalPane({
           </span>
         </div>
         <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-10 w-10 md:h-6 md:w-6"
+            onClick={handleCopyBuffer}
+            title="Copy tmux buffer to clipboard"
+          >
+            {copySuccess ? (
+              <Check className="w-5 h-5 md:w-3 md:h-3 text-green-500" />
+            ) : (
+              <Copy className="w-5 h-5 md:w-3 md:h-3" />
+            )}
+          </Button>
           <Button
             variant="ghost"
             size="icon"

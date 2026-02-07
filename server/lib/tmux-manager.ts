@@ -27,6 +27,18 @@ export class TmuxManager extends EventEmitter {
     super();
     this.checkTmuxInstalled();
     this.discoverExistingSessions();
+    this.setCopyCommand();
+  }
+
+  /**
+   * tmuxサーバーのcopy-commandを設定（pbcopyでクリップボード連携）
+   */
+  private setCopyCommand(): void {
+    try {
+      execSync('tmux set-option -s copy-command "pbcopy"', { stdio: "pipe" });
+    } catch {
+      // tmuxサーバーが起動していない場合は設定不要
+    }
   }
 
   /**
@@ -60,13 +72,6 @@ export class TmuxManager extends EventEmitter {
           const id = name.replace(this.SESSION_PREFIX, "");
           const cwd = this.getTmuxSessionCwd(name);
 
-          // 既存セッションにもマウスモードを有効にする
-          try {
-            execSync(`tmux set-option -t "${name}" mouse on`, { stdio: "pipe" });
-          } catch {
-            // 設定に失敗しても続行
-          }
-
           this.sessions.set(id, {
             id,
             tmuxSessionName: name,
@@ -75,6 +80,13 @@ export class TmuxManager extends EventEmitter {
             lastActivity: new Date(),
             status: "running",
           });
+
+          // マウスモードを有効化（再起動時に設定を再適用）
+          try {
+            execSync(`tmux set-option -t "${name}" mouse on`, { stdio: "pipe" });
+          } catch {
+            // セッションが利用不可の場合は無視
+          }
 
           console.log(`[TmuxManager] Discovered existing session: ${name}`);
         }
@@ -111,14 +123,13 @@ export class TmuxManager extends EventEmitter {
         `tmux new-session -d -s "${tmuxSessionName}" -c "${worktreePath}"`,
         { stdio: "pipe" }
       );
+      execSync(
+        `tmux set-option -t "${tmuxSessionName}" mouse on`,
+        { stdio: "pipe" }
+      );
       // claudeコマンドを送信（終了後もシェルが残るのでvimなども使える）
       execSync(
         `tmux send-keys -t "${tmuxSessionName}" "claude --dangerously-skip-permissions" Enter`,
-        { stdio: "pipe" }
-      );
-      // マウスモードを有効にしてスクロールを可能にする
-      execSync(
-        `tmux set-option -t "${tmuxSessionName}" mouse on`,
         { stdio: "pipe" }
       );
     } catch (error) {
@@ -220,6 +231,22 @@ export class TmuxManager extends EventEmitter {
     session.status = "stopped";
     this.sessions.delete(sessionId);
     this.emit("session:stopped", sessionId);
+  }
+
+  /**
+   * tmuxのペーストバッファの内容を取得
+   */
+  getBuffer(sessionId: string): string | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    try {
+      return execSync(`tmux show-buffer`, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trimEnd();
+    } catch {
+      return null;
+    }
   }
 
   /**
